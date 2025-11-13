@@ -1,11 +1,10 @@
-"""Utilities for parsing instrument .dat files into structured measurements."""
+"""Utilities for parsing CPS/DCS .dat files into structured measurements."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import io
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, List, Sequence
 
 import pandas as pd
 
@@ -93,14 +92,22 @@ def _parse_dat_text(text: str, source_name: str | None = None) -> Measurement:
         raise ValueError("No numeric samples found in provided .dat payload")
 
     metadata = _build_metadata(header_lines)
-    df = pd.DataFrame(data_points, columns=["wavenumber", "intensity"])
+    df = pd.DataFrame(data_points, columns=["particle_size", "mass_signal"])
     df = df.dropna()
-    df = df.astype({"wavenumber": "float64", "intensity": "float64"})
-    df = df.sort_values("wavenumber").reset_index(drop=True)
+    df = df.astype({"particle_size": "float64", "mass_signal": "float64"})
+    df = df.sort_values("particle_size").reset_index(drop=True)
+    df = df.rename(
+        columns={
+            "particle_size": "particle_size_um",
+            "mass_signal": "mass_signal_ug",
+        }
+    )
 
     name = str(metadata.get("sample_name") or source_name or "measurement")
     source = source_name or name
     metadata["total_points"] = len(df)
+    metadata.setdefault("particle_size_unit", "um")
+    metadata.setdefault("signal_unit", "ug")
 
     return Measurement(name=name, metadata=metadata, data=df, source=source)
 

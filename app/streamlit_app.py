@@ -1,228 +1,217 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, List, Sequence, Tuple
+import io
+from typing import Any, Dict, List, Sequence, Tuple
 
-import altair as alt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
-try:  # Streamlit exposes the UploadedFile type at runtime
+try:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
-except Exception:  # pragma: no cover - fallback for type checkers
+except Exception:  # pragma: no cover
     UploadedFile = Any  # type: ignore
 
 from lysosense import (
     AnalysisOptions,
     AnalysisResult,
     analyze_measurement,
-    list_dat_files,
-    load_dat_file,
     parse_dat_bytes,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = (PROJECT_ROOT / "data").resolve()
-
-
-@st.cache_data(show_spinner=False)
-def _load_sample_cached(path_str: str, baseline_percentile: float, smooth_window: int) -> AnalysisResult:
-    measurement = load_dat_file(Path(path_str))
-    options = AnalysisOptions(
-        baseline_percentile=baseline_percentile, smooth_window=int(smooth_window)
-    )
-    return analyze_measurement(measurement, options)
+ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
 def main() -> None:
-    st.set_page_config(page_title="LysoSense Analyzer", layout="wide")
-    st.title("LysoSense Raman Analyzer")
-    st.caption(
-        "Upload .dat exports or explore the bundled samples to inspect spectra, overlay traces, "
-        "and review automated quality metrics."
+    st.set_page_config(page_title="LysoSense CPS Analyzer", layout="wide")
+    st.title("LysoSense CPS Analyzer")
+    st.markdown(
+        "Differential centrifugal sedimentation workflow for tracking intact cells and inclusion bodies "
+        "during homogenisation (method adapted from [Klausser et al., 2025](%s))."
+        % ARTICLE_URL
     )
 
-    options, uploaded_files, selected_sample_paths = _render_sidebar(DATA_DIR)
+    options, show_fit, show_components = _render_sidebar()
 
-    results = _collect_results(uploaded_files, selected_sample_paths, options)
-    if not results:
-        st.info("Add uploads or select sample files in the sidebar to begin.")
-        return
-
-    labels = _label_results(results)
-
-    available_labels = [label for label, _ in labels]
-    active_labels = st.sidebar.multiselect(
-        "Traces to visualize",
-        available_labels,
-        default=available_labels,
-        key="trace-selector",
-    )
-    active_entries = [(label, res) for label, res in labels if label in active_labels]
-
-    if not active_entries:
-        st.warning("Select at least one trace to render the plots.")
-        return
-
-    signal_mode = st.radio(
-        "Signal view",
-        ("Raw intensity", "Baseline corrected", "Smoothed (normalized)"),
-        horizontal=True,
-    )
-
-    _render_plot(active_entries, signal_mode)
-    _render_metrics(active_entries)
-    _render_details(active_entries)
-
-
-def _render_sidebar(data_dir: Path) -> Tuple[AnalysisOptions, Sequence[UploadedFile], List[Path]]:
-    st.sidebar.header("Inputs")
-
-    baseline = st.sidebar.slider(
-        "Baseline percentile", min_value=0.0, max_value=20.0, value=5.0, step=0.5
-    )
-    smooth_window = st.sidebar.slider(
-        "Smoothing window (points)", min_value=3, max_value=51, value=11, step=2
-    )
-    options = AnalysisOptions(baseline_percentile=baseline, smooth_window=smooth_window)
-
-    uploaded_files = st.sidebar.file_uploader(
-        "Upload instrument .dat files",
+    uploaded_files = st.file_uploader(
+        "Upload CPS/DCS .dat files",
         type=["dat"],
         accept_multiple_files=True,
+        help="Drop multiple runs at once to compare peak areas and lysis efficiency.",
     )
 
-    sample_paths = list_dat_files(data_dir)
-    sample_names = [path.name for path in sample_paths]
-    default_samples = sample_names[:3]
-    chosen_samples = st.sidebar.multiselect(
-        "Sample data", sample_names, default=default_samples, key="sample-select"
+    if not uploaded_files:
+        st.info("Upload one or more .dat exports to begin the analysis.")
+        return
+
+    results = _analyze_uploads(uploaded_files, options)
+    if not results:
+        st.warning("All uploaded files failed to parse. Please verify the file format.")
+        return
+
+    labels = [label for label, _ in results]
+    active_labels = st.multiselect(
+        "Traces to visualise",
+        labels,
+        default=labels,
+        help="Use this control to focus on a subset of uploaded measurements.",
     )
 
-    selected = [data_dir / name for name in chosen_samples if (data_dir / name).exists()]
+    active_results = [(label, res) for label, res in results if label in active_labels]
+    if not active_results:
+        st.warning("Select at least one measurement to render plots and metrics.")
+        return
 
-    st.sidebar.caption(f"Data folder: {data_dir}")
+    _render_plot(active_results, show_fit, show_components)
+    summary_df = _render_metrics(active_results)
+    _render_download(summary_df)
+    _render_details(active_results)
 
-    return options, uploaded_files or [], selected
+
+def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool]:
+    st.sidebar.header("Model settings")
+    model = st.sidebar.radio("Peak model", ("gaussian", "lognormal"), horizontal=True)
+    mu_ib = st.sidebar.number_input("IB target size (um)", value=0.48, min_value=0.1, max_value=2.0, step=0.01)
+    mu_cell = st.sidebar.number_input("Cell target size (um)", value=0.85, min_value=0.1, max_value=3.0, step=0.01)
+    allow_shift = st.sidebar.slider("Allowed peak shift (%)", min_value=5, max_value=40, value=20, step=1)
+    second_peak = st.sidebar.slider(
+        "Minimum 2nd peak fraction", min_value=0.0, max_value=0.20, value=0.02, step=0.01
+    )
+    show_fit = st.sidebar.checkbox("Show fitted envelope", value=True)
+    show_components = st.sidebar.checkbox("Show component contributions", value=True)
+
+    options = AnalysisOptions(
+        model=model,  # type: ignore[arg-type]
+        mu_ib_um=float(mu_ib),
+        mu_cell_um=float(mu_cell),
+        allow_shift_fraction=allow_shift / 100.0,
+        second_peak_min_frac=float(second_peak),
+    )
+    return options, show_fit, show_components
 
 
-def _collect_results(
+def _analyze_uploads(
     uploaded_files: Sequence[UploadedFile],
-    sample_paths: Sequence[Path],
     options: AnalysisOptions,
 ) -> List[Tuple[str, AnalysisResult]]:
     results: List[Tuple[str, AnalysisResult]] = []
-
     for file in uploaded_files:
-        measurement = parse_dat_bytes(file.getvalue(), source_name=file.name)
-        analysis = analyze_measurement(measurement, options)
-        results.append((file.name, analysis))
-
-    for path in sample_paths:
-        analysis = _load_sample_cached(
-            str(path), options.baseline_percentile, options.smooth_window
-        )
-        results.append((path.name, analysis))
-
+        try:
+            measurement = parse_dat_bytes(file.getvalue(), source_name=file.name)
+            analysis = analyze_measurement(measurement, options)
+            results.append((file.name, analysis))
+        except Exception as exc:
+            st.error(f"{file.name}: {exc}")
     return results
 
 
-def _label_results(results: Sequence[Tuple[str, AnalysisResult]]) -> List[Tuple[str, AnalysisResult]]:
-    used: set[str] = set()
-    labelled: List[Tuple[str, AnalysisResult]] = []
-    for origin, analysis in results:
-        base = _format_label(analysis.measurement.name, origin)
-        label = _ensure_unique_label(base, used)
-        used.add(label)
-        labelled.append((label, analysis))
-    return labelled
-
-
-def _format_label(name: str, origin: str) -> str:
-    if origin and origin not in (name or ""):
-        return f"{name} ({origin})"
-    return name or origin
-
-
-def _ensure_unique_label(base: str, used: set[str]) -> str:
-    label = base
-    suffix = 2
-    while label in used:
-        label = f"{base} ({suffix})"
-        suffix += 1
-    return label
-
-
-def _render_plot(entries: Sequence[Tuple[str, AnalysisResult]], mode: str) -> None:
-    value_column, y_title = {
-        "Raw intensity": ("intensity", "Raw intensity"),
-        "Baseline corrected": ("intensity_corrected", "Baseline corrected"),
-        "Smoothed (normalized)": ("normalized_intensity", "Normalized (smoothed)"),
-    }[mode]
-
-    frames: List[pd.DataFrame] = []
+def _render_plot(
+    entries: Sequence[Tuple[str, AnalysisResult]],
+    show_fit: bool,
+    show_components: bool,
+) -> None:
+    fig = go.Figure()
     for label, analysis in entries:
-        subset = analysis.enriched[
-            [
-                "wavenumber",
-                "intensity",
-                "intensity_corrected",
-                "intensity_smooth",
-                "normalized_intensity",
-            ]
-        ].copy()
-        subset["measurement"] = label
-        frames.append(subset)
-
-    plot_df = pd.concat(frames, ignore_index=True)
-
-    chart = (
-        alt.Chart(plot_df)
-        .mark_line()
-        .encode(
-            x=alt.X("wavenumber:Q", title="Wavenumber (a.u.)"),
-            y=alt.Y(f"{value_column}:Q", title=y_title),
-            color=alt.Color("measurement:N", title="Trace"),
-            tooltip=[
-                alt.Tooltip("measurement:N", title="Trace"),
-                alt.Tooltip("wavenumber:Q", title="Wavenumber", format=".4f"),
-                alt.Tooltip("intensity:Q", title="Raw"),
-                alt.Tooltip("intensity_corrected:Q", title="Baseline corrected"),
-                alt.Tooltip("intensity_smooth:Q", title="Smoothed"),
-            ],
+        observed = analysis.observed
+        fig.add_trace(
+            go.Scatter(
+                x=observed["particle_size_um"],
+                y=observed["mass_signal_ug"],
+                name=f"{label} - raw",
+                mode="lines",
+            )
         )
-        .interactive()
+        if show_fit:
+            fig.add_trace(
+                go.Scatter(
+                    x=analysis.dense_fit["particle_size_um"],
+                    y=analysis.dense_fit["fit_signal_ug"],
+                    name=f"{label} - fit",
+                    mode="lines",
+                    line=dict(dash="dash"),
+                )
+            )
+        if show_components:
+            if analysis.dense_fit["cells_component_ug"].any():
+                fig.add_trace(
+                    go.Scatter(
+                        x=analysis.dense_fit["particle_size_um"],
+                        y=analysis.dense_fit["cells_component_ug"],
+                        name=f"{label} - cells",
+                        mode="lines",
+                        line=dict(width=1.5),
+                    )
+                )
+            fig.add_trace(
+                go.Scatter(
+                    x=analysis.dense_fit["particle_size_um"],
+                    y=analysis.dense_fit["ibs_component_ug"],
+                    name=f"{label} - IBs",
+                    mode="lines",
+                    line=dict(width=1.5),
+                )
+            )
+
+    fig.update_layout(
+        xaxis_title="Particle size (um)",
+        yaxis_title="D * Wd (ug)",
+        legend_title="Trace",
+        template="plotly_white",
+        margin=dict(l=40, r=10, t=40, b=40),
     )
+    st.subheader("Particle size distribution")
+    st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Signal overlay")
-    st.altair_chart(chart, use_container_width=True)
 
-
-def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
-    rows = []
+def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFrame:
+    records: List[Dict[str, float | str | None]] = []
     for label, analysis in entries:
         row = {"measurement": label}
         row.update(analysis.metrics)
-        rows.append(row)
-    metrics_df = pd.DataFrame(rows).set_index("measurement")
-    st.subheader("Automated metrics")
-    st.dataframe(metrics_df.style.format("{:.4g}"))
+        records.append(row)
+    summary = pd.DataFrame(records).set_index("measurement")
+    st.subheader("Relative abundance and lysis efficiency")
+    numeric_cols = summary.select_dtypes(include="number").columns
+    formatters = {col: "{:.4g}" for col in numeric_cols}
+    st.dataframe(summary.style.format(formatters))
+    return summary.reset_index()
+
+
+def _render_download(summary_df: pd.DataFrame) -> None:
+    if summary_df.empty:
+        return
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="summary", index=False)
+    buffer.seek(0)
+    st.download_button(
+        "Download summary (XLSX)",
+        data=buffer.getvalue(),
+        file_name="lysosense_summary.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
-    st.subheader("Per-measurement detail")
+    st.subheader("Detailed run information")
     for label, analysis in entries:
         measurement = analysis.measurement
         with st.expander(label):
             meta_df = pd.DataFrame(
                 sorted(measurement.metadata.items()), columns=["Field", "Value"]
             )
-            st.write("Metadata")
+            st.markdown("**Metadata**")
             st.dataframe(meta_df, hide_index=True, use_container_width=True)
 
-            st.write("Sampled signal (first 15 points)")
-            preview = analysis.enriched.head(15)[
-                ["wavenumber", "intensity", "intensity_corrected", "intensity_smooth"]
+            st.markdown("**Observed trace (first 15 points)**")
+            preview = analysis.observed.head(15)[
+                [
+                    "particle_size_um",
+                    "mass_signal_ug",
+                    "fit_signal_ug",
+                    "cells_component_ug",
+                    "ibs_component_ug",
+                ]
             ]
             st.dataframe(preview, use_container_width=True)
 
