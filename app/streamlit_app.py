@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Sequence, Tuple
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from pathlib import Path
+import subprocess
 
 try:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
@@ -24,9 +26,32 @@ import numpy as np
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
+def _resolve_app_version() -> str:
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        branch = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+        ).strip()
+        short_sha = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
+            text=True,
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", str(repo_root), "status", "--porcelain"],
+            text=True,
+        ).strip()
+        dirty_suffix = "*" if dirty else ""
+        return f"{branch}@{short_sha}{dirty_suffix}"
+    except Exception:
+        return "local"
+
+
 def main() -> None:
-    st.set_page_config(page_title="LysoSense CPS Analyzer", layout="wide")
-    st.title("LysoSense CPS Analyzer")
+    version_label = _resolve_app_version()
+    page_title = f"LysoSense CPS Analyzer ({version_label})"
+    st.set_page_config(page_title=page_title, layout="wide")
+    st.title(page_title)
     st.markdown(
         "Differential centrifugal sedimentation workflow for tracking intact cells and inclusion bodies "
         "during homogenisation (method adapted from [Klausser et al., 2025](%s))."
@@ -125,7 +150,16 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
 
         # Model settings section
         with st.sidebar.expander("⚙️ Model Settings", expanded=True):
-            model = st.radio("Peak model", ("gaussian", "lognormal", "autofit"), horizontal=True, key="model")
+            model_options = ("gaussian", "lognormal", "autofit")
+            default_model = st.session_state.get("model", "autofit")
+            default_index = model_options.index(default_model) if default_model in model_options else 0
+            model = st.radio(
+                "Peak model",
+                model_options,
+                horizontal=True,
+                index=default_index,
+                key="model",
+            )
             compare_models = (model == "autofit")
 
             st.markdown("**Peak Parameters**")
@@ -134,7 +168,32 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
 
             st.markdown("**Fitting Constraints**")
             allow_shift = st.slider("Allowed peak shift (%)", min_value=5, max_value=40, value=20, step=1, key="allow_shift")
-            second_peak = st.slider("Min 2nd peak fraction", min_value=0.0, max_value=0.20, value=0.02, step=0.01, key="second_peak")
+            second_peak_percent = st.slider(
+                "Min 2nd peak fraction (%)",
+                min_value=0.0,
+                max_value=8.0,
+                value=2.0,
+                step=0.5,
+                help="Minimum share of total area required to keep the cell peak.",
+                key="second_peak"
+            ) / 100.0
+            limit_peak_width = st.checkbox(
+                "Limit max peak width",
+                value=True,
+                help="Apply a full-width-at-half-maximum (FWHM) cap to both peaks to avoid overly broad fits.",
+                key="limit_peak_width",
+            )
+            if limit_peak_width:
+                max_peak_width_value = st.slider(
+                    "Max peak width (um)",
+                    min_value=0.05,
+                    max_value=0.5,
+                    value=0.3,
+                    step=0.01,
+                    key="max_peak_width",
+                )
+            else:
+                max_peak_width_value = None
 
         # Visualization section (merged with display options)
         with st.sidebar.expander("📊 Visualization", expanded=True):
@@ -157,7 +216,8 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                     # Clear all widget state to reset to defaults
                     for key in list(st.session_state.keys()):
                         if key.startswith(('view_mode', 'model', 'autofit', 'mu_ib', 'mu_cell',
-                                        'allow_shift', 'second_peak', 'show_fit', 'show_components',
+                                        'allow_shift', 'second_peak', 'limit_peak_width', 'max_peak_width',
+                                        'show_fit', 'show_components',
                                         'baseline_subtraction', 'baseline_method')):
                             del st.session_state[key]
                     st.rerun()
@@ -167,12 +227,14 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                     st.info("Configuration saved (feature coming soon)")
     else:
         # Return defaults when no files uploaded
-        model = "gaussian"
-        compare_models = False
+        model = "autofit"
+        compare_models = True
         mu_ib = 0.48
         mu_cell = 0.85
         allow_shift = 20
-        second_peak = 0.02
+        second_peak_percent = 0.02
+        limit_peak_width = True
+        max_peak_width_value = 0.3
         show_fit = True
         show_components = True
         baseline_subtraction = False
@@ -182,12 +244,14 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
 
     # Don't create AnalysisOptions here anymore since it depends on the model choice
     # Create a placeholder with default values that will be overridden in analysis
+    peak_width_cap = float(max_peak_width_value) if (limit_peak_width and max_peak_width_value) else None
     options = AnalysisOptions(
         model="gaussian",  # placeholder, will be overridden
         mu_ib_um=float(mu_ib),
         mu_cell_um=float(mu_cell),
         allow_shift_fraction=allow_shift / 100.0,
-        second_peak_min_frac=float(second_peak),
+        second_peak_min_frac=float(second_peak_percent),
+        max_peak_fwhm_um=peak_width_cap,
     )
     return options, show_fit, show_components, view_mode, compare_models, baseline_subtraction, baseline_method, normalize_data, uploaded_files
 
@@ -198,7 +262,7 @@ def _analyze_uploads(
     normalize_data: bool,
 ) -> List[Tuple[str, AnalysisResult]]:
     results: List[Tuple[str, AnalysisResult]] = []
-    model = st.session_state.get('model', 'gaussian')
+    model = st.session_state.get('model', 'autofit')
     compare_models = (model == 'autofit')
     baseline_subtraction = st.session_state.get('baseline_subtraction', False)
     baseline_method = st.session_state.get('baseline_method', 'minimum')
@@ -206,6 +270,7 @@ def _analyze_uploads(
     for file in uploaded_files:
         try:
             measurement = parse_dat_bytes(file.getvalue(), source_name=file.name)
+            measurement = _clip_measurement_range(measurement, 0.2, 1.2)
 
             # Apply baseline subtraction if requested
             if baseline_subtraction:
@@ -223,6 +288,7 @@ def _analyze_uploads(
                     mu_cell_um=options.mu_cell_um,
                     allow_shift_fraction=options.allow_shift_fraction,
                     second_peak_min_frac=options.second_peak_min_frac,
+                    max_peak_fwhm_um=options.max_peak_fwhm_um,
                 ))
 
                 lognormal_result = analyze_measurement(measurement, AnalysisOptions(
@@ -231,6 +297,7 @@ def _analyze_uploads(
                     mu_cell_um=options.mu_cell_um,
                     allow_shift_fraction=options.allow_shift_fraction,
                     second_peak_min_frac=options.second_peak_min_frac,
+                    max_peak_fwhm_um=options.max_peak_fwhm_um,
                 ))
 
                 # Calculate R² for both models
@@ -251,6 +318,7 @@ def _analyze_uploads(
                     mu_cell_um=options.mu_cell_um,
                     allow_shift_fraction=options.allow_shift_fraction,
                     second_peak_min_frac=options.second_peak_min_frac,
+                    max_peak_fwhm_um=options.max_peak_fwhm_um,
                 )
                 analysis = analyze_measurement(measurement, actual_options)
 
@@ -370,6 +438,35 @@ def _normalize_data(measurement):
         data=normalized_data,
         source=measurement.source,
         notes=measurement.notes + [f"Normalized to max intensity (factor: {normalization_factor:.2e})"]
+    )
+
+
+def _clip_measurement_range(measurement, min_size: float, max_size: float):
+    """Restrict the measurement to a particle-size window."""
+    from lysosense.io import Measurement
+
+    if measurement.data.empty:
+        return measurement
+
+    df = measurement.data.copy()
+    mask = df["particle_size_um"].between(min_size, max_size)
+
+    if not mask.any():
+        # If no points fall in range, keep the original to avoid empty fits.
+        return measurement
+
+    clipped_data = df.loc[mask].reset_index(drop=True)
+
+    clipped_metadata = measurement.metadata.copy()
+    clipped_metadata["clip_min_um"] = min_size
+    clipped_metadata["clip_max_um"] = max_size
+
+    return Measurement(
+        name=measurement.name,
+        metadata=clipped_metadata,
+        data=clipped_data,
+        source=measurement.source,
+        notes=measurement.notes + [f"Clipped to {min_size:.2f}-{max_size:.2f} µm range"]
     )
 
 
