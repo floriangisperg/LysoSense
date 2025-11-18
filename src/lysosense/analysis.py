@@ -118,8 +118,8 @@ def _derive_metrics(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: Analysis
         "area_total": area_total,
         "intact_fraction": intact_fraction,
         "lysis_efficiency": lysis_eff,
-        "mean_cell_um": m_cell,
-        "mean_ib_um": m_ib,
+        "mean_cell_µm": m_cell,
+        "mean_ib_µm": m_ib,
     }
 
 
