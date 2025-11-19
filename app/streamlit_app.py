@@ -6,8 +6,6 @@ from typing import Any, Dict, List, Sequence, Tuple
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from pathlib import Path
-import subprocess
 
 try:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
@@ -26,30 +24,8 @@ import numpy as np
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
-def _resolve_app_version() -> str:
-    repo_root = Path(__file__).resolve().parents[1]
-    try:
-        branch = subprocess.check_output(
-            ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
-            text=True,
-        ).strip()
-        short_sha = subprocess.check_output(
-            ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
-            text=True,
-        ).strip()
-        dirty = subprocess.check_output(
-            ["git", "-C", str(repo_root), "status", "--porcelain"],
-            text=True,
-        ).strip()
-        dirty_suffix = "*" if dirty else ""
-        return f"{branch}@{short_sha}{dirty_suffix}"
-    except Exception:
-        return "local"
-
-
 def main() -> None:
-    version_label = _resolve_app_version()
-    page_title = f"LysoSense CPS Analyzer ({version_label})"
+    page_title = "LysoSense CPS Analyzer"
     st.set_page_config(page_title=page_title, layout="wide")
     st.title(page_title)
     st.markdown(
