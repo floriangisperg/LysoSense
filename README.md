@@ -44,6 +44,6 @@ streamlit run app\streamlit_app.py
 
 ### Citation
 If this tool supports your work, please cite:
-- Klausser et al., 2025. “Differential centrifugal sedimentation workflow for tracking intact cells and inclusion bodies during homogenisation.” [Link](https://www.sciencedirect.com/science/article/pii/S0168165625002706).
+- Klausser et al., 2025. “Increased purity and refolding yield of bacterial inclusion bodies by recursive high pressure homogenization” [Link](https://www.sciencedirect.com/science/article/pii/S0168165625002706).
 
 Questions or feedback? Open an issue or submit a pull request.
