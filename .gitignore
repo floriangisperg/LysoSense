@@ -20,6 +20,7 @@ env/
 # Editors & tooling
 .vscode/
 .idea/
+.claude/
 
 # Notebooks
 .ipynb_checkpoints/
