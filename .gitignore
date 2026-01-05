@@ -22,6 +22,7 @@ env/
 .vscode/
 .idea/
 .claude/
+.agents/
 
 # Notebooks
 notebooks/
