@@ -14,8 +14,9 @@ dist/
 venv/
 env/
 
-# Streamlit / app cache
-.streamlit/
+# Streamlit cache (but keep config files)
+.streamlit/cache/
+.streamlit/secrets.toml
 
 # Editors & tooling
 .vscode/
@@ -23,6 +24,7 @@ env/
 .claude/
 
 # Notebooks
+notebooks/
 .ipynb_checkpoints/
 
 # Data & generated outputs
@@ -30,7 +32,12 @@ env/
 *.xlsx
 *.csv
 *.log
+*.png
+claude.md
 
 # Misc
 .DS_Store
 Thumbs.db
+scripts/
+src/lysosense/facs/
+uv.lock

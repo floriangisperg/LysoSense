@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python -m streamlit run:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(mkdir:*)",
+      "Bash(git checkout -b feature/facs-module-reorganization)",
+      "Bash(set PYTHONPATH=src)",
+      "Bash(cd /c/Users/fgisperg/OneDrive - TU Wien/01_Uni/01_PhD/05_Projects/LysoSense)"
     ],
     "deny": [],
     "ask": []

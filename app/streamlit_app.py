@@ -1,11 +1,19 @@
 ﻿from __future__ import annotations
 
 import io
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+# Add src directory to path to ensure lysosense package can be imported
+# This is necessary for Streamlit Cloud deployment where the package is in src/
+src_path = str(Path(__file__).parent.parent / "src")
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
 try:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
