@@ -6,7 +6,6 @@ from typing import Dict, List, Literal, Tuple, Optional
 
 import numpy as np
 import pandas as pd
-from numpy import trapz
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 from scipy.stats import lognorm, norm
@@ -108,8 +107,8 @@ def _build_dense_frame(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: Analy
 
 def _derive_metrics(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: AnalysisOptions) -> Dict[str, float | str | None]:
     total, cells, ibs, _ = _component_arrays(x, fitres, opts)
-    area_cells = float(trapz(cells, x))
-    area_ibs = float(trapz(ibs, x))
+    area_cells = float(np.trapz(cells, x))
+    area_ibs = float(np.trapz(ibs, x))
     area_total = max(area_cells + area_ibs, 1e-12)
 
     if fitres["kind"] == "two":
@@ -151,8 +150,8 @@ def _fit_curve(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Dict[str,
     try:
         popt, pcov = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
         comp1, comp2, _ = _component_arrays_raw(x, popt, opts)
-        area1 = trapz(comp1, x)
-        area2 = trapz(comp2, x)
+        area1 = np.trapz(comp1, x)
+        area2 = np.trapz(comp2, x)
         frac2 = area2 / max(area1 + area2, 1e-12)
         if frac2 < opts.second_peak_min_frac:
             raise _SecondPeakTooSmall
