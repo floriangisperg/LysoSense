@@ -35,6 +35,7 @@ notebooks/
 *.log
 *.png
 claude.md
+agents.md
 
 # Misc
 .DS_Store
