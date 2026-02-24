@@ -32,15 +32,6 @@ streamlit run app\streamlit_app.py
 +- README.md          # You are here
 ```
 
-### Data & Privacy
-- Do not commit production datasets. The `data/` directory is ignored by default.
-- Uploaded files in the web app are processed in-memory for analysis.
-
-### Contributing
-- Follow PEP 8 (4-space indents, snake_case). Type hints for public APIs.
-- Add regression tests for new parsing/fitting logic when feasible.
-- Keep PRs focused (parsing vs. analysis vs. UI) and include screenshots/GIFs for UI changes.
-- Suggested validation steps: `streamlit run app\streamlit_app.py` and relevant unit tests.
 
 ### Citation
 If this tool supports your work, please cite:
