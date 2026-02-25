@@ -85,8 +85,14 @@ def main() -> None:
     with tab4:
         _render_details_tab(active_results)
 
-    # Download button stays at bottom
-    _render_download(summary_df)
+    # Download buttons stay at bottom
+    st.markdown("---")
+    st.markdown("### Downloads")
+    col1, col2 = st.columns(2)
+    with col1:
+        _render_download(summary_df)
+    with col2:
+        _render_experimental_data_download(active_results)
 
 
 def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, bool, bool]:
@@ -795,6 +801,43 @@ def _render_download(summary_df: pd.DataFrame) -> None:
         data=buffer.getvalue(),
         file_name="lysosense_summary.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def _render_experimental_data_download(results: List[Tuple[str, AnalysisResult]]) -> None:
+    """Download button for experimental data with fits.
+
+    Creates an Excel file where each sheet corresponds to one uploaded data file.
+    Each sheet contains:
+    - particle_size_um: Original x values
+    - mass_signal_ug: Original y values (raw signal)
+    - fit_signal_ug: Total fitted signal
+    - cells_component_ug: Cells component of the fit
+    - ibs_component_ug: Inclusion bodies component of the fit
+    """
+    if not results:
+        return
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for label, analysis in results:
+            # Create sheet name from filename (remove .dat extension)
+            # Excel sheet names are limited to 31 characters
+            sheet_name = label.replace('.dat', '')[:31]
+
+            # Use observed DataFrame which contains original data and fitted values
+            df = analysis.observed.copy()
+
+            # Write to sheet
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    buffer.seek(0)
+    st.download_button(
+        "Download experimental data (XLSX)",
+        data=buffer.getvalue(),
+        file_name="lysosense_experimental_data.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="Download an Excel file with each sample as a separate sheet, containing original data and fitted values.",
     )
 
 
