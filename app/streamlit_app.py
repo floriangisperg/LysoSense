@@ -16,18 +16,17 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 try:
-    from streamlit.runtime.uploaded_file_manager import UploadedFile
+    from streamlit.runtime.uploaded_file_manager import UploadedFile  # noqa: E402
 except Exception:  # pragma: no cover
     UploadedFile = Any  # type: ignore
 
-from lysosense import (
+from lysosense import (  # noqa: E402
     AnalysisOptions,
     AnalysisResult,
     analyze_measurement,
     parse_dat_bytes,
 )
-from scipy.optimize import curve_fit
-import numpy as np
+import numpy as np  # noqa: E402
 
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
