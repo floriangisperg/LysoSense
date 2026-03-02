@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import io
 import sys
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
 import pandas as pd
-import plotly.graph_objects as go
+import plotly.graph_objects as go  # type: ignore[import-untyped]
 import streamlit as st
 
 # Add src directory to path to ensure lysosense package can be imported
@@ -41,7 +41,17 @@ def main() -> None:
         % ARTICLE_URL
     )
 
-    options, show_fit, show_components, view_mode, compare_models, baseline_subtraction, baseline_method, normalize_data, uploaded_files = _render_sidebar()
+    (
+        options,
+        show_fit,
+        show_components,
+        view_mode,
+        compare_models,
+        baseline_subtraction,
+        baseline_method,
+        normalize_data,
+        uploaded_files,
+    ) = _render_sidebar()
 
     if not uploaded_files:
         st.info("📁 Upload .dat files in the sidebar to begin the analysis.")
@@ -66,18 +76,22 @@ def main() -> None:
         return
 
     # Create tab interface
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 Overview",
-        "🔍 Individual Samples",
-        "📈 Results Table",
-        "ℹ️ Detailed Information"
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "📊 Overview",
+            "🔍 Individual Samples",
+            "📈 Results Table",
+            "ℹ️ Detailed Information",
+        ]
+    )
 
     with tab1:
         _render_overview_tab(active_results, show_fit, show_components, view_mode)
 
     with tab2:
-        _render_individual_samples_tab(active_results, show_fit, show_components, view_mode)
+        _render_individual_samples_tab(
+            active_results, show_fit, show_components, view_mode
+        )
 
     with tab3:
         summary_df = _render_results_tab(active_results)
@@ -95,7 +109,9 @@ def main() -> None:
         _render_experimental_data_download(active_results)
 
 
-def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, bool, bool]:
+def _render_sidebar() -> Tuple[
+    AnalysisOptions, bool, bool, str, bool, bool, str, bool, List[Any]
+]:
     # Data upload section (always expanded)
     with st.sidebar.expander("📁 Data Upload", expanded=True):
         uploaded_files = st.file_uploader(
@@ -103,7 +119,7 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
             type=["dat"],
             accept_multiple_files=True,
             help="Drop multiple runs at once to compare peak areas and lysis efficiency.",
-            key="file_uploader"
+            key="file_uploader",
         )
 
     # Only show other sections if files are uploaded
@@ -114,7 +130,7 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                 "Baseline subtraction",
                 value=False,
                 help="Subtract baseline from raw data before fitting",
-                key="baseline_subtraction"
+                key="baseline_subtraction",
             )
 
             baseline_method = st.selectbox(
@@ -122,7 +138,7 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                 ("minimum", "percentile", "linear"),
                 help="• Minimum: Use minimum signal value\n• Percentile: Use 1st percentile\n• Linear: Linear fit to edges",
                 disabled=not baseline_subtraction,
-                key="baseline_method"
+                key="baseline_method",
             )
 
             st.markdown("---")  # Separator
@@ -131,17 +147,23 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                 "Normalize data",
                 value=False,
                 help="Normalize data to enable comparison between samples with different concentrations",
-                key="normalize_data"
+                key="normalize_data",
             )
 
             if normalize_data:
-                st.markdown("**Method**: Max intensity normalization (scales to maximum signal value)")
+                st.markdown(
+                    "**Method**: Max intensity normalization (scales to maximum signal value)"
+                )
 
         # Model settings section
         with st.sidebar.expander("⚙️ Model Settings", expanded=True):
             model_options = ("gaussian", "lognormal", "autofit")
             default_model = st.session_state.get("model", "autofit")
-            default_index = model_options.index(default_model) if default_model in model_options else 0
+            default_index = (
+                model_options.index(default_model)
+                if default_model in model_options
+                else 0
+            )
             model = st.radio(
                 "Peak model",
                 model_options,
@@ -149,23 +171,47 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                 index=default_index,
                 key="model",
             )
-            compare_models = (model == "autofit")
+            compare_models = model == "autofit"
 
             st.markdown("**Peak Parameters**")
-            mu_ib = st.number_input("IB target size (µm)", value=0.48, min_value=0.1, max_value=2.0, step=0.01, key="mu_ib")
-            mu_cell = st.number_input("Cell target size (µm)", value=0.85, min_value=0.1, max_value=3.0, step=0.01, key="mu_cell")
+            mu_ib = st.number_input(
+                "IB target size (µm)",
+                value=0.48,
+                min_value=0.1,
+                max_value=2.0,
+                step=0.01,
+                key="mu_ib",
+            )
+            mu_cell = st.number_input(
+                "Cell target size (µm)",
+                value=0.85,
+                min_value=0.1,
+                max_value=3.0,
+                step=0.01,
+                key="mu_cell",
+            )
 
             st.markdown("**Fitting Constraints**")
-            allow_shift = st.slider("Allowed peak shift (%)", min_value=5, max_value=40, value=20, step=1, key="allow_shift")
-            second_peak_percent = st.slider(
-                "Min 2nd peak fraction (%)",
-                min_value=0.0,
-                max_value=8.0,
-                value=2.0,
-                step=0.5,
-                help="Minimum share of total area required to keep the cell peak.",
-                key="second_peak"
-            ) / 100.0
+            allow_shift = st.slider(
+                "Allowed peak shift (%)",
+                min_value=5,
+                max_value=40,
+                value=20,
+                step=1,
+                key="allow_shift",
+            )
+            second_peak_percent = (
+                st.slider(
+                    "Min 2nd peak fraction (%)",
+                    min_value=0.0,
+                    max_value=8.0,
+                    value=2.0,
+                    step=0.5,
+                    help="Minimum share of total area required to keep the cell peak.",
+                    key="second_peak",
+                )
+                / 100.0
+            )
             limit_peak_width = st.checkbox(
                 "Limit max peak width",
                 value=True,
@@ -190,12 +236,14 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                 "View mode",
                 ("Combined", "Fit Overview", "Raw Data Only"),
                 help="• Combined: Raw data + fits + components\n• Fit Overview: Only fitted components\n• Raw Data Only: Just raw measurements",
-                key="view_mode"
+                key="view_mode",
             )
 
             st.markdown("**Display Options**")
             show_fit = st.checkbox("Show fitted envelope", value=True, key="show_fit")
-            show_components = st.checkbox("Show component contributions", value=True, key="show_components")
+            show_components = st.checkbox(
+                "Show component contributions", value=True, key="show_components"
+            )
 
         # Quick actions section
         with st.sidebar.expander("⚡ Quick Actions", expanded=False):
@@ -204,10 +252,23 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
                 if st.button("🔄 Reset All", help="Reset all settings to defaults"):
                     # Clear all widget state to reset to defaults
                     for key in list(st.session_state.keys()):
-                        if key.startswith(('view_mode', 'model', 'autofit', 'mu_ib', 'mu_cell',
-                                        'allow_shift', 'second_peak', 'limit_peak_width', 'max_peak_width',
-                                        'show_fit', 'show_components',
-                                        'baseline_subtraction', 'baseline_method')):
+                        if isinstance(key, str) and key.startswith(
+                            (
+                                "view_mode",
+                                "model",
+                                "autofit",
+                                "mu_ib",
+                                "mu_cell",
+                                "allow_shift",
+                                "second_peak",
+                                "limit_peak_width",
+                                "max_peak_width",
+                                "show_fit",
+                                "show_components",
+                                "baseline_subtraction",
+                                "baseline_method",
+                            )
+                        ):
                             del st.session_state[key]
                     st.rerun()
 
@@ -233,7 +294,11 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
 
     # Don't create AnalysisOptions here anymore since it depends on the model choice
     # Create a placeholder with default values that will be overridden in analysis
-    peak_width_cap = float(max_peak_width_value) if (limit_peak_width and max_peak_width_value) else None
+    peak_width_cap = (
+        float(max_peak_width_value)
+        if (limit_peak_width and max_peak_width_value)
+        else None
+    )
     options = AnalysisOptions(
         model="gaussian",  # placeholder, will be overridden
         mu_ib_um=float(mu_ib),
@@ -242,7 +307,17 @@ def _render_sidebar() -> Tuple[AnalysisOptions, bool, bool, str, bool, bool, boo
         second_peak_min_frac=float(second_peak_percent),
         max_peak_fwhm_um=peak_width_cap,
     )
-    return options, show_fit, show_components, view_mode, compare_models, baseline_subtraction, baseline_method, normalize_data, uploaded_files
+    return (
+        options,
+        show_fit,
+        show_components,
+        view_mode,
+        compare_models,
+        baseline_subtraction,
+        baseline_method,
+        normalize_data,
+        uploaded_files,
+    )
 
 
 def _analyze_uploads(
@@ -251,10 +326,10 @@ def _analyze_uploads(
     normalize_data: bool,
 ) -> List[Tuple[str, AnalysisResult]]:
     results: List[Tuple[str, AnalysisResult]] = []
-    model = st.session_state.get('model', 'autofit')
-    compare_models = (model == 'autofit')
-    baseline_subtraction = st.session_state.get('baseline_subtraction', False)
-    baseline_method = st.session_state.get('baseline_method', 'minimum')
+    model = st.session_state.get("model", "autofit")
+    compare_models = model == "autofit"
+    baseline_subtraction = st.session_state.get("baseline_subtraction", False)
+    baseline_method = st.session_state.get("baseline_method", "minimum")
 
     for file in uploaded_files:
         try:
@@ -271,23 +346,29 @@ def _analyze_uploads(
 
             if compare_models:
                 # Fit both models and choose the better one
-                gaussian_result = analyze_measurement(measurement, AnalysisOptions(
-                    model="gaussian",
-                    mu_ib_um=options.mu_ib_um,
-                    mu_cell_um=options.mu_cell_um,
-                    allow_shift_fraction=options.allow_shift_fraction,
-                    second_peak_min_frac=options.second_peak_min_frac,
-                    max_peak_fwhm_um=options.max_peak_fwhm_um,
-                ))
+                gaussian_result = analyze_measurement(
+                    measurement,
+                    AnalysisOptions(
+                        model="gaussian",
+                        mu_ib_um=options.mu_ib_um,
+                        mu_cell_um=options.mu_cell_um,
+                        allow_shift_fraction=options.allow_shift_fraction,
+                        second_peak_min_frac=options.second_peak_min_frac,
+                        max_peak_fwhm_um=options.max_peak_fwhm_um,
+                    ),
+                )
 
-                lognormal_result = analyze_measurement(measurement, AnalysisOptions(
-                    model="lognormal",
-                    mu_ib_um=options.mu_ib_um,
-                    mu_cell_um=options.mu_cell_um,
-                    allow_shift_fraction=options.allow_shift_fraction,
-                    second_peak_min_frac=options.second_peak_min_frac,
-                    max_peak_fwhm_um=options.max_peak_fwhm_um,
-                ))
+                lognormal_result = analyze_measurement(
+                    measurement,
+                    AnalysisOptions(
+                        model="lognormal",
+                        mu_ib_um=options.mu_ib_um,
+                        mu_cell_um=options.mu_cell_um,
+                        allow_shift_fraction=options.allow_shift_fraction,
+                        second_peak_min_frac=options.second_peak_min_frac,
+                        max_peak_fwhm_um=options.max_peak_fwhm_um,
+                    ),
+                )
 
                 # Calculate R² for both models
                 gaussian_r2 = _calculate_r_squared(gaussian_result)
@@ -320,11 +401,11 @@ def _analyze_uploads(
 def _calculate_r_squared(result: AnalysisResult) -> float:
     """Calculate R² for the fit."""
     observed = result.observed
-    y_actual = observed["mass_signal_ug"].values
-    y_predicted = observed["fit_signal_ug"].values
+    y_actual = observed["mass_signal_ug"].to_numpy()
+    y_predicted = observed["fit_signal_ug"].to_numpy()
 
-    ss_res = np.sum((y_actual - y_predicted) ** 2)
-    ss_tot = np.sum((y_actual - np.mean(y_actual)) ** 2)
+    ss_res = float(np.sum((y_actual - y_predicted) ** 2))
+    ss_tot = float(np.sum((y_actual - float(np.mean(y_actual))) ** 2))
 
     if ss_tot == 0:
         return 0.0
@@ -386,7 +467,7 @@ def _subtract_baseline(measurement, method: str = "minimum"):
         metadata=corrected_metadata,
         data=corrected_data,
         source=measurement.source,
-        notes=measurement.notes + [f"Baseline corrected using {method} method"]
+        notes=measurement.notes + [f"Baseline corrected using {method} method"],
     )
 
 
@@ -405,7 +486,9 @@ def _normalize_data(measurement):
 
     # Avoid division by zero
     if normalization_factor <= 0:
-        st.warning(f"Normalization factor is {normalization_factor:.2e}, skipping normalization for {measurement.name}")
+        st.warning(
+            f"Normalization factor is {normalization_factor:.2e}, skipping normalization for {measurement.name}"
+        )
         return measurement
 
     # Apply normalization
@@ -426,7 +509,8 @@ def _normalize_data(measurement):
         metadata=normalized_metadata,
         data=normalized_data,
         source=measurement.source,
-        notes=measurement.notes + [f"Normalized to max intensity (factor: {normalization_factor:.2e})"]
+        notes=measurement.notes
+        + [f"Normalized to max intensity (factor: {normalization_factor:.2e})"],
     )
 
 
@@ -455,7 +539,8 @@ def _clip_measurement_range(measurement, min_size: float, max_size: float):
         metadata=clipped_metadata,
         data=clipped_data,
         source=measurement.source,
-        notes=measurement.notes + [f"Clipped to {min_size:.2f}-{max_size:.2f} µm range"]
+        notes=measurement.notes
+        + [f"Clipped to {min_size:.2f}-{max_size:.2f} µm range"],
     )
 
 
@@ -464,15 +549,25 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
     fig = go.Figure()
 
     # Color palette for samples
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
 
     for i, (label, analysis) in enumerate(entries):
         color = colors[i % len(colors)]
         observed = analysis.observed
 
         # Extract sample name (remove file extension for cleaner legend)
-        sample_name = label.replace('.dat', '')
+        sample_name = label.replace(".dat", "")
 
         fig.add_trace(
             go.Scatter(
@@ -493,8 +588,11 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
         xaxis=dict(range=[0.2, 1.2]),
     )
     # Check if any samples are normalized
-    normalized_samples = [label for label, analysis in entries
-                         if analysis.measurement.metadata.get('normalized', False)]
+    normalized_samples = [
+        label
+        for label, analysis in entries
+        if analysis.measurement.metadata.get("normalized", False)
+    ]
 
     title = "Raw Particle Size Distributions"
     if normalized_samples:
@@ -513,12 +611,22 @@ def _render_fit_overview(
     fig = go.Figure()
 
     # Color palette for samples (same as raw data view for consistency)
-    sample_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-                     '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    sample_colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
 
     for i, (label, analysis) in enumerate(entries):
         color = sample_colors[i % len(sample_colors)]
-        sample_name = label.replace('.dat', '')
+        sample_name = label.replace(".dat", "")
         group_name = f"group_{i}"
 
         # Show fit envelope if requested
@@ -576,15 +684,20 @@ def _render_fit_overview(
             itemclick="toggleothers",
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
-        )
+        ),
     )
 
     # Add legend guide
-    st.markdown("**Legend Guide:** Click sample names to toggle all traces • Click individual traces to toggle • Line styles: solid=cells, dashed=fit, dotted=IBs")
+    st.markdown(
+        "**Legend Guide:** Click sample names to toggle all traces • Click individual traces to toggle • Line styles: solid=cells, dashed=fit, dotted=IBs"
+    )
 
     # Check if any samples are normalized
-    normalized_samples = [label for label, analysis in entries
-                         if analysis.measurement.metadata.get('normalized', False)]
+    normalized_samples = [
+        label
+        for label, analysis in entries
+        if analysis.measurement.metadata.get("normalized", False)
+    ]
 
     title = "Fit Components Overview"
     if normalized_samples:
@@ -603,12 +716,22 @@ def _render_plot(
     fig = go.Figure()
 
     # Color palette for samples
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
 
     for i, (label, analysis) in enumerate(entries):
         color = colors[i % len(colors)]
-        sample_name = label.replace('.dat', '')
+        sample_name = label.replace(".dat", "")
         group_name = f"group_{i}"
         observed = analysis.observed
 
@@ -675,15 +798,20 @@ def _render_plot(
             itemclick="toggleothers",
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
-        )
+        ),
     )
 
     # Add legend guide
-    st.markdown("**Legend Guide:** Click sample names to toggle all traces • Line styles: solid=raw/cells, dashed=fit, dotted=IBs")
+    st.markdown(
+        "**Legend Guide:** Click sample names to toggle all traces • Line styles: solid=raw/cells, dashed=fit, dotted=IBs"
+    )
 
     # Check if any samples are normalized
-    normalized_samples = [label for label, analysis in entries
-                         if analysis.measurement.metadata.get('normalized', False)]
+    normalized_samples = [
+        label
+        for label, analysis in entries
+        if analysis.measurement.metadata.get("normalized", False)
+    ]
 
     title = "Combined Particle Size Distribution"
     if normalized_samples:
@@ -696,8 +824,8 @@ def _render_plot(
 def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFrame:
     records: List[Dict[str, float | str | None]] = []
     for label, analysis in entries:
-        row = {"measurement": label}
-        row.update(analysis.metrics)
+        row: Dict[str, float | str | None] = {"measurement": label}
+        row.update(analysis.metrics)  # type: ignore[arg-type]
 
         # Add fit quality metrics
         r_squared = _calculate_r_squared(analysis)
@@ -705,18 +833,24 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
         row["fit_quality"] = _get_fit_quality_label(r_squared)
 
         # Add baseline information
-        baseline_subtracted = analysis.measurement.metadata.get('baseline_subtracted', False)
+        baseline_subtracted = analysis.measurement.metadata.get(
+            "baseline_subtracted", False
+        )
         if baseline_subtracted:
-            baseline_method = analysis.measurement.metadata.get('baseline_method', 'unknown')
+            baseline_method = analysis.measurement.metadata.get(
+                "baseline_method", "unknown"
+            )
             row["baseline_corrected"] = f"Yes ({baseline_method})"
         else:
             row["baseline_corrected"] = "No"
 
         # Add normalization information
-        normalized = analysis.measurement.metadata.get('normalized', False)
+        normalized = analysis.measurement.metadata.get("normalized", False)
         if normalized:
-            norm_method = analysis.measurement.metadata.get('normalization_method', 'unknown')
-            norm_factor = analysis.measurement.metadata.get('normalization_factor', 1.0)
+            norm_method = analysis.measurement.metadata.get(
+                "normalization_method", "unknown"
+            )
+            norm_factor = analysis.measurement.metadata.get("normalization_factor", 1.0)
             row["normalized"] = f"Yes ({norm_method}, {norm_factor:.2e})"
         else:
             row["normalized"] = "No"
@@ -727,10 +861,19 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
 
     # Reorder columns for better readability
     column_order = [
-        "model", "fit_kind", "baseline_corrected", "normalized", "r_squared", "fit_quality",
-        "area_cells", "area_inclusion_bodies", "area_total",
-        "intact_fraction", "lysis_efficiency",
-        "mean_cell_µm", "mean_ib_µm"
+        "model",
+        "fit_kind",
+        "baseline_corrected",
+        "normalized",
+        "r_squared",
+        "fit_quality",
+        "area_cells",
+        "area_inclusion_bodies",
+        "area_total",
+        "intact_fraction",
+        "lysis_efficiency",
+        "mean_cell_µm",
+        "mean_ib_µm",
     ]
 
     # Only include columns that exist
@@ -744,24 +887,24 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
     numeric_cols = summary.select_dtypes(include="number").columns
 
     # Custom formatters
-    formatters = {col: "{:.4g}" for col in numeric_cols if col != "r_squared"}
+    formatters: Dict[str, str] = {col: "{:.4g}" for col in numeric_cols if col != "r_squared"}
     formatters["r_squared"] = "{:.4f}"
 
     # Style the dataframe with conditional formatting for fit quality
-    styled_summary = summary.style.format(formatters)
+    styled_summary = summary.style.format(formatters)  # type: ignore[arg-type]
 
     # Add color coding for R² values
-    def highlight_r_squared(val):
+    def highlight_r_squared(val: float) -> str:
         if val >= 0.95:
-            return 'background-color: #d4edda'  # Green - excellent
+            return "background-color: #d4edda"  # Green - excellent
         elif val >= 0.90:
-            return 'background-color: #fff3cd'  # Yellow - good
+            return "background-color: #fff3cd"  # Yellow - good
         elif val >= 0.80:
-            return 'background-color: #f8d7da'  # Light red - fair
+            return "background-color: #f8d7da"  # Light red - fair
         else:
-            return 'background-color: #f5c6cb'  # Dark red - poor
+            return "background-color: #f5c6cb"  # Dark red - poor
 
-    styled_summary = styled_summary.applymap(highlight_r_squared, subset=['r_squared'])
+    styled_summary = styled_summary.map(highlight_r_squared, subset=["r_squared"])  # type: ignore[arg-type]
 
     st.dataframe(styled_summary)
 
@@ -804,7 +947,9 @@ def _render_download(summary_df: pd.DataFrame) -> None:
     )
 
 
-def _render_experimental_data_download(results: List[Tuple[str, AnalysisResult]]) -> None:
+def _render_experimental_data_download(
+    results: List[Tuple[str, AnalysisResult]],
+) -> None:
     """Download button for experimental data with fits.
 
     Creates an Excel file where each sheet corresponds to one uploaded data file.
@@ -823,7 +968,7 @@ def _render_experimental_data_download(results: List[Tuple[str, AnalysisResult]]
         for label, analysis in results:
             # Create sheet name from filename (remove .dat extension)
             # Excel sheet names are limited to 31 characters
-            sheet_name = label.replace('.dat', '')[:31]
+            sheet_name = label.replace(".dat", "")[:31]
 
             # Use observed DataFrame which contains original data and fitted values
             df = analysis.observed.copy()
@@ -869,7 +1014,7 @@ def _render_overview_tab(
     entries: Sequence[Tuple[str, AnalysisResult]],
     show_fit: bool,
     show_components: bool,
-    view_mode: str
+    view_mode: str,
 ) -> None:
     """Render the Overview tab with combined plots."""
     st.markdown("### Combined Analysis Overview")
@@ -888,7 +1033,7 @@ def _render_individual_samples_tab(
     entries: Sequence[Tuple[str, AnalysisResult]],
     show_fit: bool,
     show_components: bool,
-    view_mode: str
+    view_mode: str,
 ) -> None:
     """Render individual samples in a grid layout."""
     st.markdown("### Individual Sample Analysis")
@@ -911,13 +1056,17 @@ def _render_individual_samples_tab(
             if idx < n_samples:
                 with cols[col]:
                     label, analysis = entries[idx]
-                    sample_name = label.replace('.dat', '')
+                    sample_name = label.replace(".dat", "")
 
                     st.markdown(f"**{sample_name}**")
 
                     # Create individual plot for this sample
                     fig = _create_individual_sample_plot(
-                        [(label, analysis)], show_fit, show_components, view_mode, sample_name
+                        [(label, analysis)],
+                        show_fit,
+                        show_components,
+                        view_mode,
+                        sample_name,
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -927,13 +1076,13 @@ def _create_individual_sample_plot(
     show_fit: bool,
     show_components: bool,
     view_mode: str,
-    sample_name: str
+    sample_name: str,
 ) -> go.Figure:
     """Create a plot for a single sample."""
     fig = go.Figure()
 
     # Use a consistent color for the sample
-    color = '#1f77b4'
+    color = "#1f77b4"
 
     for label, analysis in entries:
         observed = analysis.observed
@@ -1039,7 +1188,7 @@ def _create_individual_sample_plot(
         legend=dict(
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
-        )
+        ),
     )
 
     return fig

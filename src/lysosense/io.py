@@ -1,4 +1,5 @@
 """Utilities for parsing CPS/DCS .dat files into structured measurements."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,8 +1,9 @@
 """Signal analysis helpers for LysoSense DCS datasets."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Tuple, Optional
+from typing import Dict, List, Literal, Tuple, Optional, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,15 @@ from scipy.signal import find_peaks
 from scipy.stats import lognorm, norm
 
 from .io import Measurement
+
+
+class _FitResult(TypedDict):
+    """Type definition for fit result dictionary."""
+    kind: Literal["one", "two"]
+    popt: np.ndarray
+    pcov: np.ndarray
+    cell_first: Optional[bool]
+    hints: PeakHints
 
 
 ModelType = Literal["gaussian", "lognormal"]
@@ -82,7 +92,12 @@ def analyze_measurement(
     )
 
 
-def _augment_observed(df: pd.DataFrame, x: np.ndarray, fitres: Dict[str, np.ndarray], opts: AnalysisOptions) -> pd.DataFrame:
+def _augment_observed(
+    df: pd.DataFrame,
+    x: np.ndarray,
+    fitres: _FitResult,
+    opts: AnalysisOptions,
+) -> pd.DataFrame:
     observed = df.copy()
     total, cells, ibs, _ = _component_arrays(x, fitres, opts)
     observed["fit_signal_ug"] = total
@@ -91,7 +106,9 @@ def _augment_observed(df: pd.DataFrame, x: np.ndarray, fitres: Dict[str, np.ndar
     return observed
 
 
-def _build_dense_frame(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: AnalysisOptions) -> pd.DataFrame:
+def _build_dense_frame(
+    x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
+) -> pd.DataFrame:
     dense_x = np.linspace(x.min(), x.max(), opts.dense_points)
     total, cells, ibs, baseline = _component_arrays(dense_x, fitres, opts)
     return pd.DataFrame(
@@ -105,7 +122,9 @@ def _build_dense_frame(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: Analy
     )
 
 
-def _derive_metrics(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: AnalysisOptions) -> Dict[str, float | str | None]:
+def _derive_metrics(
+    x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
+) -> Dict[str, float | str | None]:
     total, cells, ibs, _ = _component_arrays(x, fitres, opts)
     area_cells = float(np.trapz(cells, x))
     area_ibs = float(np.trapz(ibs, x))
@@ -139,7 +158,9 @@ def _derive_metrics(x: np.ndarray, fitres: Dict[str, np.ndarray], opts: Analysis
     }
 
 
-def _fit_curve(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Dict[str, np.ndarray]:
+def _fit_curve(
+    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+) -> _FitResult:
     if np.max(y) <= 0:
         raise ValueError("Signal trace contains no positive values to fit")
 
@@ -150,13 +171,19 @@ def _fit_curve(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Dict[str,
     try:
         popt, pcov = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
         comp1, comp2, _ = _component_arrays_raw(x, popt, opts)
-        area1 = np.trapz(comp1, x)
-        area2 = np.trapz(comp2, x)
+        area1 = float(np.trapz(comp1, x))
+        area2 = float(np.trapz(comp2, x))
         frac2 = area2 / max(area1 + area2, 1e-12)
         if frac2 < opts.second_peak_min_frac:
             raise _SecondPeakTooSmall
         cell_first = _determine_cell_first(popt, hints, opts)
-        return {"kind": "two", "popt": popt, "pcov": pcov, "cell_first": cell_first, "hints": hints}
+        return {
+            "kind": "two",
+            "popt": popt,
+            "pcov": pcov,
+            "cell_first": cell_first,
+            "hints": hints,
+        }
     except (RuntimeError, ValueError, _SecondPeakTooSmall):
         single_bounds = _bounds_for_one_peak(opts, hints)
         single_model = _one_peak_model(opts)
@@ -164,10 +191,18 @@ def _fit_curve(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Dict[str,
         popt, pcov = curve_fit(
             single_model, x, y, p0=single_p0, bounds=single_bounds, maxfev=100000
         )
-        return {"kind": "one", "popt": popt, "pcov": pcov, "cell_first": None, "hints": hints}
+        return {
+            "kind": "one",
+            "popt": popt,
+            "pcov": pcov,
+            "cell_first": None,
+            "hints": hints,
+        }
 
 
-def _initial_guesses(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Tuple[Tuple[float, ...], PeakHints]:
+def _initial_guesses(
+    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+) -> Tuple[Tuple[float, ...], PeakHints]:
     max_signal = float(np.max(y))
     baseline_guess = float(np.percentile(y, 1))
     span = max(opts.allow_shift_fraction, 0.20)
@@ -203,7 +238,9 @@ def _initial_guesses(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Tup
         float(np.clip(ib_hint.mu, lo_mu_ib, hi_mu_ib)) if ib_hint else opts.mu_ib_um
     )
     mu_cell_guess = (
-        float(np.clip(cell_hint.mu, lo_mu_cell, hi_mu_cell)) if cell_hint else opts.mu_cell_um
+        float(np.clip(cell_hint.mu, lo_mu_cell, hi_mu_cell))
+        if cell_hint
+        else opts.mu_cell_um
     )
 
     if opts.model == "lognormal":
@@ -211,7 +248,8 @@ def _initial_guesses(x: np.ndarray, y: np.ndarray, opts: AnalysisOptions) -> Tup
             _lognormal_shape_from_hint(ib_hint, mu_ib_guess), *opts.s_bounds_logn_ib
         )
         s2 = np.clip(
-            _lognormal_shape_from_hint(cell_hint, mu_cell_guess), *opts.s_bounds_logn_cells
+            _lognormal_shape_from_hint(cell_hint, mu_cell_guess),
+            *opts.s_bounds_logn_cells,
         )
     else:
         s1_hint = ib_hint.sigma if ib_hint else None
@@ -241,9 +279,7 @@ def _bounds_for_two_peak(
     ib_hint = hints.get("ib")
     cell_hint = hints.get("cell")
     if ib_hint:
-        lo_mu_ib, hi_mu_ib = _tight_bounds_from_hint(
-            ib_hint.mu, lo_mu_ib, hi_mu_ib
-        )
+        lo_mu_ib, hi_mu_ib = _tight_bounds_from_hint(ib_hint.mu, lo_mu_ib, hi_mu_ib)
         sigma_ib_lo, sigma_ib_hi = _sigma_bounds_from_hint(
             ib_hint.sigma, opts.sigma_bounds_gauss_ib
         )
@@ -259,8 +295,12 @@ def _bounds_for_two_peak(
     else:
         sigma_cell_lo, sigma_cell_hi = opts.sigma_bounds_gauss_cells
 
-    ib_mode_ref = float(np.clip(ib_hint.mu if ib_hint else opts.mu_ib_um, lo_mu_ib, hi_mu_ib))
-    cell_mode_ref = float(np.clip(cell_hint.mu if cell_hint else opts.mu_cell_um, lo_mu_cell, hi_mu_cell))
+    ib_mode_ref = float(
+        np.clip(ib_hint.mu if ib_hint else opts.mu_ib_um, lo_mu_ib, hi_mu_ib)
+    )
+    cell_mode_ref = float(
+        np.clip(cell_hint.mu if cell_hint else opts.mu_cell_um, lo_mu_cell, hi_mu_cell)
+    )
 
     max_sigma_cap = _sigma_cap_from_fwhm(opts.max_peak_fwhm_um)
     if max_sigma_cap is not None:
@@ -319,7 +359,7 @@ def _bounds_for_two_peak(
             sigma_cell_hi,
             np.inf,
         ]
-    return (lo, hi)
+    return (tuple(lo), tuple(hi))
 
 
 def _bounds_for_one_peak(
@@ -329,15 +369,15 @@ def _bounds_for_one_peak(
     hi_mu_ib = opts.mu_ib_um * (1 + opts.allow_shift_fraction)
     ib_hint = hints.get("ib")
     if ib_hint:
-        lo_mu_ib, hi_mu_ib = _tight_bounds_from_hint(
-            ib_hint.mu, lo_mu_ib, hi_mu_ib
-        )
+        lo_mu_ib, hi_mu_ib = _tight_bounds_from_hint(ib_hint.mu, lo_mu_ib, hi_mu_ib)
         sigma_lo, sigma_hi = _sigma_bounds_from_hint(
             ib_hint.sigma, opts.sigma_bounds_gauss_ib
         )
     else:
         sigma_lo, sigma_hi = opts.sigma_bounds_gauss_ib
-    ib_mode_ref = float(np.clip(ib_hint.mu if ib_hint else opts.mu_ib_um, lo_mu_ib, hi_mu_ib))
+    ib_mode_ref = float(
+        np.clip(ib_hint.mu if ib_hint else opts.mu_ib_um, lo_mu_ib, hi_mu_ib)
+    )
 
     if opts.model == "lognormal":
         lo = [0, lo_mu_ib, opts.s_bounds_logn_ib[0], -np.inf]
@@ -355,11 +395,12 @@ def _bounds_for_one_peak(
                 sigma_hi = max(sigma_lo * 1.01, sigma_lo + 1e-4)
         lo = [0, lo_mu_ib, sigma_lo, -np.inf]
         hi = [np.inf, hi_mu_ib, sigma_hi, np.inf]
-    return (lo, hi)
+    return (tuple(lo), tuple(hi))
 
 
 def _two_peak_model(opts: AnalysisOptions):
     if opts.model == "lognormal":
+
         def model(x, A1, m1, s1, A2, m2, s2, c0):
             scale1 = _lognorm_scale_from_mode(m1, s1)
             scale2 = _lognorm_scale_from_mode(m2, s2)
@@ -369,28 +410,33 @@ def _two_peak_model(opts: AnalysisOptions):
                 + c0
             )
     else:
+
         def model(x, A1, m1, s1, A2, m2, s2, c0):
             return (
                 A1 * norm.pdf(x, loc=m1, scale=s1)
                 + A2 * norm.pdf(x, loc=m2, scale=s2)
                 + c0
             )
+
     return model
 
 
 def _one_peak_model(opts: AnalysisOptions):
     if opts.model == "lognormal":
+
         def model(x, A1, m1, s1, c0):
             scale = _lognorm_scale_from_mode(m1, s1)
             return A1 * lognorm.pdf(x, s1, scale=scale) + c0
     else:
+
         def model(x, A1, m1, s1, c0):
             return A1 * norm.pdf(x, loc=m1, scale=s1) + c0
+
     return model
 
 
 def _component_arrays(
-    x: np.ndarray, fitres: Dict[str, np.ndarray], opts: AnalysisOptions
+    x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     if fitres["kind"] == "two":
         comp1, comp2, baseline = _component_arrays_raw(x, fitres["popt"], opts)
@@ -612,9 +658,7 @@ def _select_peak_index(region_x: np.ndarray, region_y: np.ndarray) -> Optional[i
     return target_idx
 
 
-def _lognormal_shape_from_hint(
-    hint: Optional[_PeakHint], mu_guess: float
-) -> float:
+def _lognormal_shape_from_hint(hint: Optional[_PeakHint], mu_guess: float) -> float:
     if not hint or hint.sigma <= 0 or mu_guess <= 0:
         return 0.20
     ratio = hint.sigma / max(mu_guess, 1e-6)
@@ -646,7 +690,7 @@ def _lognorm_scale_from_mode(mode: float, shape: float) -> float:
     """
     safe_mode = max(mode, 1e-6)
     safe_shape = max(shape, 1e-6)
-    return float(safe_mode * np.exp(safe_shape ** 2))
+    return float(safe_mode * np.exp(safe_shape**2))
 
 
 def _cell_component_first(m1: float, m2: float, opts: AnalysisOptions) -> bool:
