@@ -21,15 +21,27 @@ class _FitResult(TypedDict):
     pcov: np.ndarray
     cell_first: Optional[bool]
     hints: PeakHints
+    model_ib: ModelType
+    model_cell: ModelType
 
 
-ModelType = Literal["gaussian", "lognormal"]
+ModelType = Literal["gaussian", "lognormal", "splitgaussian"]
+
+
+def _params_per_peak(model: ModelType) -> int:
+    """Return number of parameters per peak for a given model type."""
+    if model == "splitgaussian":
+        return 4
+    return 3
 _MIN_RELIABLE_SIGMA = 0.015  # �m; narrower hints are considered noise
 
 
 @dataclass
 class AnalysisOptions:
     model: ModelType = "gaussian"
+    # Override model per peak (if set, takes precedence over 'model')
+    model_ib: Optional[ModelType] = None
+    model_cell: Optional[ModelType] = None
     mu_ib_um: float = 0.48
     mu_cell_um: float = 0.85
     allow_shift_fraction: float = 0.20
@@ -37,9 +49,20 @@ class AnalysisOptions:
     sigma_bounds_gauss_cells: Tuple[float, float] = (0.05, 0.50)
     s_bounds_logn_ib: Tuple[float, float] = (0.03, 0.40)
     s_bounds_logn_cells: Tuple[float, float] = (0.05, 0.80)
+    # Split Gaussian bounds: (sigma_left, sigma_right) for each peak type
+    sigma_left_bounds_ib: Tuple[float, float] = (0.01, 0.25)
+    sigma_right_bounds_ib: Tuple[float, float] = (0.01, 0.40)
+    sigma_left_bounds_cells: Tuple[float, float] = (0.05, 0.50)
+    sigma_right_bounds_cells: Tuple[float, float] = (0.05, 0.80)
     second_peak_min_frac: float = 0.02
     dense_points: int = 1200
     max_peak_fwhm_um: Optional[float] = None
+
+    def get_model_ib(self) -> ModelType:
+        return self.model_ib if self.model_ib else self.model
+
+    def get_model_cell(self) -> ModelType:
+        return self.model_cell if self.model_cell else self.model
 
 
 @dataclass
@@ -99,7 +122,7 @@ def _augment_observed(
     opts: AnalysisOptions,
 ) -> pd.DataFrame:
     observed = df.copy()
-    total, cells, ibs, _ = _component_arrays(x, fitres, opts)
+    total, cells, ibs = _component_arrays(x, fitres, opts)
     observed["fit_signal_ug"] = total
     observed["cells_component_ug"] = cells
     observed["ibs_component_ug"] = ibs
@@ -110,14 +133,13 @@ def _build_dense_frame(
     x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
 ) -> pd.DataFrame:
     dense_x = np.linspace(x.min(), x.max(), opts.dense_points)
-    total, cells, ibs, baseline = _component_arrays(dense_x, fitres, opts)
+    total, cells, ibs = _component_arrays(dense_x, fitres, opts)
     return pd.DataFrame(
         {
             "particle_size_um": dense_x,
             "fit_signal_ug": total,
             "cells_component_ug": cells,
             "ibs_component_ug": ibs,
-            "baseline_ug": baseline,
         }
     )
 
@@ -125,22 +147,26 @@ def _build_dense_frame(
 def _derive_metrics(
     x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
 ) -> Dict[str, float | str | None]:
-    total, cells, ibs, _ = _component_arrays(x, fitres, opts)
+    total, cells, ibs = _component_arrays(x, fitres, opts)
     area_cells = float(np.trapz(cells, x))
     area_ibs = float(np.trapz(ibs, x))
     area_total = max(area_cells + area_ibs, 1e-12)
 
+    model_ib = fitres.get("model_ib", opts.get_model_ib())
+    model_cell = fitres.get("model_cell", opts.get_model_cell())
+
     if fitres["kind"] == "two":
-        _, m1, _, _, m2, _, _ = fitres["popt"]
+        n1 = _params_per_peak(model_ib)
+        m1 = fitres["popt"][1]
+        m2 = fitres["popt"][n1 + 1]
         cell_first = fitres.get("cell_first")
         if cell_first is None:
             cell_first = _cell_component_first(m1, m2, opts)
         m_cell = float(m1 if cell_first else m2)
         m_ib = float(m2 if cell_first else m1)
     else:
-        _, m_ib, _, _ = fitres["popt"]
+        m_ib = float(fitres["popt"][1])
         m_cell = None
-        m_ib = float(m_ib)
 
     intact_fraction = float(area_cells / area_total)
     lysis_eff = float(1.0 - intact_fraction)
@@ -164,30 +190,42 @@ def _fit_curve(
     if np.max(y) <= 0:
         raise ValueError("Signal trace contains no positive values to fit")
 
-    p0, hints = _initial_guesses(x, y, opts)
-    bounds = _bounds_for_two_peak(opts, hints)
-    model_fn = _two_peak_model(opts)
+    model_ib = opts.get_model_ib()
+    model_cell = opts.get_model_cell()
+
+    base_p0, hints = _initial_guesses(x, y, opts)
+    A1, mu_ib_guess, A2, mu_cell_guess = base_p0
+
+    # Build full initial params based on model types
+    p1 = _single_peak_initial_params(model_ib, A1, mu_ib_guess, hints.get("ib"), opts, is_ib=True)
+    p2 = _single_peak_initial_params(model_cell, A2, mu_cell_guess, hints.get("cell"), opts, is_ib=False)
+    p0 = p1 + p2  # type: ignore[assignment]
+
+    bounds = _bounds_for_two_peak(opts, hints, model_ib, model_cell)
+    model_fn = _two_peak_model(opts, model_ib, model_cell)
 
     try:
         popt, pcov = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
-        comp1, comp2, _ = _component_arrays_raw(x, popt, opts)
+        comp1, comp2 = _component_arrays_raw(x, popt, model_ib, model_cell)
         area1 = float(np.trapz(comp1, x))
         area2 = float(np.trapz(comp2, x))
         frac2 = area2 / max(area1 + area2, 1e-12)
         if frac2 < opts.second_peak_min_frac:
             raise _SecondPeakTooSmall
-        cell_first = _determine_cell_first(popt, hints, opts)
+        cell_first = _determine_cell_first(popt, hints, opts, model_ib, model_cell)
         return {
             "kind": "two",
             "popt": popt,
             "pcov": pcov,
             "cell_first": cell_first,
             "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
         }
     except (RuntimeError, ValueError, _SecondPeakTooSmall):
-        single_bounds = _bounds_for_one_peak(opts, hints)
-        single_model = _one_peak_model(opts)
-        single_p0 = (p0[0], p0[1], p0[2], p0[-1])
+        single_bounds = _bounds_for_one_peak(opts, hints, model_ib)
+        single_model = _one_peak_model(model_ib)
+        single_p0 = p1
         popt, pcov = curve_fit(
             single_model, x, y, p0=single_p0, bounds=single_bounds, maxfev=100000
         )
@@ -197,6 +235,8 @@ def _fit_curve(
             "pcov": pcov,
             "cell_first": None,
             "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
         }
 
 
@@ -243,34 +283,44 @@ def _initial_guesses(
         else opts.mu_cell_um
     )
 
-    if opts.model == "lognormal":
-        s1 = np.clip(
-            _lognormal_shape_from_hint(ib_hint, mu_ib_guess), *opts.s_bounds_logn_ib
-        )
-        s2 = np.clip(
-            _lognormal_shape_from_hint(cell_hint, mu_cell_guess),
-            *opts.s_bounds_logn_cells,
-        )
-    else:
-        s1_hint = ib_hint.sigma if ib_hint else None
-        s2_hint = cell_hint.sigma if cell_hint else None
-        s1 = np.clip(
-            s1_hint if s1_hint is not None else 0.08,
-            *opts.sigma_bounds_gauss_ib,
-        )
-        s2 = np.clip(
-            s2_hint if s2_hint is not None else 0.15,
-            *opts.sigma_bounds_gauss_cells,
-        )
+    return (A1, mu_ib_guess, A2, mu_cell_guess), {"ib": ib_hint, "cell": cell_hint}
 
-    c0 = float(max(0.0, baseline_guess))
-    params = (A1, mu_ib_guess, s1, A2, mu_cell_guess, s2, c0)
-    return params, {"ib": ib_hint, "cell": cell_hint}
+
+def _single_peak_initial_params(
+    model_type: ModelType,
+    A: float,
+    mu: float,
+    hint: Optional[_PeakHint],
+    opts: AnalysisOptions,
+    is_ib: bool,
+) -> Tuple[float, ...]:
+    """Generate initial parameters for a single peak based on its model type."""
+    if model_type == "lognormal":
+        s = np.clip(
+            _lognormal_shape_from_hint(hint, mu),
+            *(opts.s_bounds_logn_ib if is_ib else opts.s_bounds_logn_cells)
+        )
+        return (A, mu, s)
+    elif model_type == "splitgaussian":
+        s_hint = hint.sigma if hint else None
+        s = np.clip(
+            s_hint if s_hint is not None else (0.08 if is_ib else 0.15),
+            *(opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells)
+        )
+        return (A, mu, s, s)  # Same sigma for left and right initially
+    else:  # gaussian
+        s_hint = hint.sigma if hint else None
+        s = np.clip(
+            s_hint if s_hint is not None else (0.08 if is_ib else 0.15),
+            *(opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells)
+        )
+        return (A, mu, s)
 
 
 def _bounds_for_two_peak(
-    opts: AnalysisOptions, hints: PeakHints
+    opts: AnalysisOptions, hints: PeakHints, model_ib: ModelType, model_cell: ModelType
 ) -> Tuple[Tuple[float, ...], Tuple[float, ...]]:
+    """Build bounds for two-peak fit with potentially different model types."""
     lo_mu_ib = opts.mu_ib_um * (1 - opts.allow_shift_fraction)
     hi_mu_ib = opts.mu_ib_um * (1 + opts.allow_shift_fraction)
     lo_mu_cell = opts.mu_cell_um * (1 - opts.allow_shift_fraction)
@@ -280,20 +330,10 @@ def _bounds_for_two_peak(
     cell_hint = hints.get("cell")
     if ib_hint:
         lo_mu_ib, hi_mu_ib = _tight_bounds_from_hint(ib_hint.mu, lo_mu_ib, hi_mu_ib)
-        sigma_ib_lo, sigma_ib_hi = _sigma_bounds_from_hint(
-            ib_hint.sigma, opts.sigma_bounds_gauss_ib
-        )
-    else:
-        sigma_ib_lo, sigma_ib_hi = opts.sigma_bounds_gauss_ib
     if cell_hint:
         lo_mu_cell, hi_mu_cell = _tight_bounds_from_hint(
             cell_hint.mu, lo_mu_cell, hi_mu_cell
         )
-        sigma_cell_lo, sigma_cell_hi = _sigma_bounds_from_hint(
-            cell_hint.sigma, opts.sigma_bounds_gauss_cells
-        )
-    else:
-        sigma_cell_lo, sigma_cell_hi = opts.sigma_bounds_gauss_cells
 
     ib_mode_ref = float(
         np.clip(ib_hint.mu if ib_hint else opts.mu_ib_um, lo_mu_ib, hi_mu_ib)
@@ -302,146 +342,213 @@ def _bounds_for_two_peak(
         np.clip(cell_hint.mu if cell_hint else opts.mu_cell_um, lo_mu_cell, hi_mu_cell)
     )
 
-    max_sigma_cap = _sigma_cap_from_fwhm(opts.max_peak_fwhm_um)
-    if max_sigma_cap is not None:
-        sigma_ib_hi = min(sigma_ib_hi, max_sigma_cap)
-        sigma_cell_hi = min(sigma_cell_hi, max_sigma_cap)
-        if sigma_ib_hi <= sigma_ib_lo:
-            sigma_ib_hi = max(sigma_ib_lo * 1.01, sigma_ib_lo + 1e-4)
-        if sigma_cell_hi <= sigma_cell_lo:
-            sigma_cell_hi = max(sigma_cell_lo * 1.01, sigma_cell_lo + 1e-4)
+    # Get bounds for each peak based on its model type
+    lo_ib, hi_ib = _single_peak_bounds(
+        model_ib, lo_mu_ib, hi_mu_ib, opts, ib_hint, ib_mode_ref, is_ib=True
+    )
+    lo_cell, hi_cell = _single_peak_bounds(
+        model_cell, lo_mu_cell, hi_mu_cell, opts, cell_hint, cell_mode_ref, is_ib=False
+    )
 
-    if opts.model == "lognormal":
-        lo = [
-            0,
-            lo_mu_ib,
-            opts.s_bounds_logn_ib[0],
-            0,
-            lo_mu_cell,
-            opts.s_bounds_logn_cells[0],
-            -np.inf,
-        ]
-        hi = [
-            np.inf,
-            hi_mu_ib,
-            opts.s_bounds_logn_ib[1],
-            np.inf,
-            hi_mu_cell,
-            opts.s_bounds_logn_cells[1],
-            np.inf,
-        ]
-        max_shape_ib = _shape_cap_from_fwhm(opts.max_peak_fwhm_um, ib_mode_ref)
-        max_shape_cell = _shape_cap_from_fwhm(opts.max_peak_fwhm_um, cell_mode_ref)
-        if max_shape_ib is not None:
-            hi[2] = min(hi[2], max_shape_ib)
+    return (tuple(lo_ib + lo_cell), tuple(hi_ib + hi_cell))
+
+
+def _single_peak_bounds(
+    model_type: ModelType,
+    lo_mu: float,
+    hi_mu: float,
+    opts: AnalysisOptions,
+    hint: Optional[_PeakHint],
+    mode_ref: float,
+    is_ib: bool,
+) -> Tuple[List[float], List[float]]:
+    """Build bounds for a single peak based on its model type."""
+    max_sigma_cap = _sigma_cap_from_fwhm(opts.max_peak_fwhm_um)
+
+    if model_type == "lognormal":
+        s_bounds = opts.s_bounds_logn_ib if is_ib else opts.s_bounds_logn_cells
+        lo = [0, lo_mu, s_bounds[0]]
+        hi = [np.inf, hi_mu, s_bounds[1]]
+        # Apply FWHM cap
+        max_shape = _shape_cap_from_fwhm(opts.max_peak_fwhm_um, mode_ref)
+        if max_shape is not None:
+            hi[2] = min(hi[2], max_shape)
             if hi[2] <= lo[2]:
                 hi[2] = max(lo[2] * 1.01, lo[2] + 1e-4)
-        if max_shape_cell is not None:
-            hi[5] = min(hi[5], max_shape_cell)
-            if hi[5] <= lo[5]:
-                hi[5] = max(lo[5] * 1.01, lo[5] + 1e-4)
-    else:
-        lo = [
-            0,
-            lo_mu_ib,
-            sigma_ib_lo,
-            0,
-            lo_mu_cell,
-            sigma_cell_lo,
-            -np.inf,
-        ]
-        hi = [
-            np.inf,
-            hi_mu_ib,
-            sigma_ib_hi,
-            np.inf,
-            hi_mu_cell,
-            sigma_cell_hi,
-            np.inf,
-        ]
-    return (tuple(lo), tuple(hi))
+    elif model_type == "splitgaussian":
+        left_bounds = opts.sigma_left_bounds_ib if is_ib else opts.sigma_left_bounds_cells
+        right_bounds = opts.sigma_right_bounds_ib if is_ib else opts.sigma_right_bounds_cells
+        sigma_left_hi = left_bounds[1]
+        sigma_right_hi = right_bounds[1]
+        if max_sigma_cap is not None:
+            sigma_left_hi = min(sigma_left_hi, max_sigma_cap)
+            sigma_right_hi = min(sigma_right_hi, max_sigma_cap)
+        lo = [0, lo_mu, left_bounds[0], right_bounds[0]]
+        hi = [np.inf, hi_mu, sigma_left_hi, sigma_right_hi]
+    else:  # gaussian
+        sigma_bounds = opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells
+        sigma_lo, sigma_hi = sigma_bounds
+        if hint:
+            sigma_lo, sigma_hi = _sigma_bounds_from_hint(hint.sigma, sigma_bounds)
+        if max_sigma_cap is not None:
+            sigma_hi = min(sigma_hi, max_sigma_cap)
+            if sigma_hi <= sigma_lo:
+                sigma_hi = max(sigma_lo * 1.01, sigma_lo + 1e-4)
+        lo = [0, lo_mu, sigma_lo]
+        hi = [np.inf, hi_mu, sigma_hi]
+
+    return lo, hi
 
 
 def _bounds_for_one_peak(
-    opts: AnalysisOptions, hints: PeakHints
+    opts: AnalysisOptions, hints: PeakHints, model_type: ModelType
 ) -> Tuple[Tuple[float, ...], Tuple[float, ...]]:
     lo_mu_ib = opts.mu_ib_um * (1 - opts.allow_shift_fraction)
     hi_mu_ib = opts.mu_ib_um * (1 + opts.allow_shift_fraction)
     ib_hint = hints.get("ib")
     if ib_hint:
         lo_mu_ib, hi_mu_ib = _tight_bounds_from_hint(ib_hint.mu, lo_mu_ib, hi_mu_ib)
-        sigma_lo, sigma_hi = _sigma_bounds_from_hint(
-            ib_hint.sigma, opts.sigma_bounds_gauss_ib
-        )
-    else:
-        sigma_lo, sigma_hi = opts.sigma_bounds_gauss_ib
     ib_mode_ref = float(
         np.clip(ib_hint.mu if ib_hint else opts.mu_ib_um, lo_mu_ib, hi_mu_ib)
     )
 
-    if opts.model == "lognormal":
-        lo = [0, lo_mu_ib, opts.s_bounds_logn_ib[0], -np.inf]
-        hi = [np.inf, hi_mu_ib, opts.s_bounds_logn_ib[1], np.inf]
-        max_shape_ib = _shape_cap_from_fwhm(opts.max_peak_fwhm_um, ib_mode_ref)
-        if max_shape_ib is not None:
-            hi[2] = min(hi[2], max_shape_ib)
-            if hi[2] <= lo[2]:
-                hi[2] = max(lo[2] * 1.01, lo[2] + 1e-4)
-    else:
-        max_sigma_cap = _sigma_cap_from_fwhm(opts.max_peak_fwhm_um)
-        if max_sigma_cap is not None:
-            sigma_hi = min(sigma_hi, max_sigma_cap)
-            if sigma_hi <= sigma_lo:
-                sigma_hi = max(sigma_lo * 1.01, sigma_lo + 1e-4)
-        lo = [0, lo_mu_ib, sigma_lo, -np.inf]
-        hi = [np.inf, hi_mu_ib, sigma_hi, np.inf]
+    lo, hi = _single_peak_bounds(model_type, lo_mu_ib, hi_mu_ib, opts, ib_hint, ib_mode_ref, is_ib=True)
     return (tuple(lo), tuple(hi))
 
 
-def _two_peak_model(opts: AnalysisOptions):
-    if opts.model == "lognormal":
+def _two_peak_model(opts: AnalysisOptions, model_ib: ModelType, model_cell: ModelType):
+    """Create a two-peak model function with potentially different model types per peak."""
+    n1 = _params_per_peak(model_ib)
+    n2 = _params_per_peak(model_cell)
 
-        def model(x, A1, m1, s1, A2, m2, s2, c0):
+    # Build parameter names dynamically for the signature
+    # We'll use *args and unpack manually to handle variable parameter counts
+
+    if model_ib == "lognormal" and model_cell == "lognormal":
+        def model(x, A1, m1, s1, A2, m2, s2):
             scale1 = _lognorm_scale_from_mode(m1, s1)
             scale2 = _lognorm_scale_from_mode(m2, s2)
             return (
                 A1 * lognorm.pdf(x, s1, scale=scale1)
                 + A2 * lognorm.pdf(x, s2, scale=scale2)
-                + c0
             )
-    else:
-
-        def model(x, A1, m1, s1, A2, m2, s2, c0):
+    elif model_ib == "splitgaussian" and model_cell == "splitgaussian":
+        def model(x, A1, m1, s_left1, s_right1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
+            return (
+                _split_gaussian(x, A1, m1, s_left1, s_right1)
+                + _split_gaussian(x, A2, m2, s_left2, s_right2)
+            )
+    elif model_ib == "gaussian" and model_cell == "gaussian":
+        def model(x, A1, m1, s1, A2, m2, s2):
             return (
                 A1 * norm.pdf(x, loc=m1, scale=s1)
                 + A2 * norm.pdf(x, loc=m2, scale=s2)
-                + c0
             )
+    elif model_ib == "lognormal" and model_cell == "gaussian":
+        def model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
+            scale1 = _lognorm_scale_from_mode(m1, s1)
+            return (
+                A1 * lognorm.pdf(x, s1, scale=scale1)
+                + A2 * norm.pdf(x, loc=m2, scale=s2)
+            )
+    elif model_ib == "gaussian" and model_cell == "lognormal":
+        def model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
+            scale2 = _lognorm_scale_from_mode(m2, s2)
+            return (
+                A1 * norm.pdf(x, loc=m1, scale=s1)
+                + A2 * lognorm.pdf(x, s2, scale=scale2)
+            )
+    elif model_ib == "splitgaussian" and model_cell == "gaussian":
+        def model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
+            return (
+                _split_gaussian(x, A1, m1, s_left1, s_right1)
+                + A2 * norm.pdf(x, loc=m2, scale=s2)
+            )
+    elif model_ib == "gaussian" and model_cell == "splitgaussian":
+        def model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
+            return (
+                A1 * norm.pdf(x, loc=m1, scale=s1)
+                + _split_gaussian(x, A2, m2, s_left2, s_right2)
+            )
+    elif model_ib == "splitgaussian" and model_cell == "lognormal":
+        def model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
+            scale2 = _lognorm_scale_from_mode(m2, s2)
+            return (
+                _split_gaussian(x, A1, m1, s_left1, s_right1)
+                + A2 * lognorm.pdf(x, s2, scale=scale2)
+            )
+    elif model_ib == "lognormal" and model_cell == "splitgaussian":
+        def model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
+            scale1 = _lognorm_scale_from_mode(m1, s1)
+            return (
+                A1 * lognorm.pdf(x, s1, scale=scale1)
+                + _split_gaussian(x, A2, m2, s_left2, s_right2)
+            )
+    else:
+        raise ValueError(f"Unknown model combination: {model_ib}, {model_cell}")
 
     return model
 
 
-def _one_peak_model(opts: AnalysisOptions):
-    if opts.model == "lognormal":
+def _one_peak_model(model_type: ModelType):
+    if model_type == "lognormal":
 
-        def model(x, A1, m1, s1, c0):
+        def model(x, A1, m1, s1):
             scale = _lognorm_scale_from_mode(m1, s1)
-            return A1 * lognorm.pdf(x, s1, scale=scale) + c0
+            return A1 * lognorm.pdf(x, s1, scale=scale)
+    elif model_type == "splitgaussian":
+
+        def model(x, A1, m1, s_left1, s_right1):  # type: ignore[misc]
+            return _split_gaussian(x, A1, m1, s_left1, s_right1)
     else:
 
-        def model(x, A1, m1, s1, c0):
-            return A1 * norm.pdf(x, loc=m1, scale=s1) + c0
+        def model(x, A1, m1, s1):
+            return A1 * norm.pdf(x, loc=m1, scale=s1)
 
     return model
+
+
+def _split_gaussian(
+    x: np.ndarray, A: float, mu: float, sigma_left: float, sigma_right: float
+) -> np.ndarray:
+    """Two-piece (split) Gaussian with different sigmas for left and right sides."""
+    result = np.zeros_like(x, dtype=float)
+    left_mask = x < mu
+    right_mask = ~left_mask
+    result[left_mask] = A * np.exp(-0.5 * ((x[left_mask] - mu) / sigma_left) ** 2)
+    result[right_mask] = A * np.exp(-0.5 * ((x[right_mask] - mu) / sigma_right) ** 2)
+    return result
+
+
+def _eval_single_peak(
+    x: np.ndarray, model_type: ModelType, params: np.ndarray
+) -> np.ndarray:
+    """Evaluate a single peak given its model type and parameters."""
+    if model_type == "lognormal":
+        scale = _lognorm_scale_from_mode(params[1], params[2])
+        return params[0] * lognorm.pdf(x, params[2], scale=scale)
+    elif model_type == "splitgaussian":
+        return _split_gaussian(x, params[0], params[1], params[2], params[3])
+    else:  # gaussian
+        return params[0] * norm.pdf(x, loc=params[1], scale=params[2])
+
+
+def _get_mu_from_params(model_type: ModelType, params: np.ndarray) -> float:
+    """Get the center/mu value from peak parameters."""
+    return float(params[1])
 
 
 def _component_arrays(
     x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    model_ib = fitres.get("model_ib", opts.get_model_ib())
+    model_cell = fitres.get("model_cell", opts.get_model_cell())
+
     if fitres["kind"] == "two":
-        comp1, comp2, baseline = _component_arrays_raw(x, fitres["popt"], opts)
+        comp1, comp2 = _component_arrays_raw(x, fitres["popt"], model_ib, model_cell)
+        n1 = _params_per_peak(model_ib)
         m1 = fitres["popt"][1]
-        m2 = fitres["popt"][4]
+        m2 = fitres["popt"][n1 + 1]
         cell_first = fitres.get("cell_first")
         if cell_first is None:
             cell_first = _cell_component_first(m1, m2, opts)
@@ -450,38 +557,27 @@ def _component_arrays(
         else:
             cells, ibs = comp2, comp1
     else:
-        comp1, baseline = _single_component(x, fitres["popt"], opts)
+        comp1 = _single_component(x, fitres["popt"], model_ib)
         cells = np.zeros_like(comp1)
         ibs = comp1
-    total = cells + ibs + baseline
-    return total, cells, ibs, baseline
+    total = cells + ibs
+    return total, cells, ibs
 
 
 def _component_arrays_raw(
-    x: np.ndarray, params: np.ndarray, opts: AnalysisOptions
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if opts.model == "lognormal":
-        scale1 = _lognorm_scale_from_mode(params[1], params[2])
-        scale2 = _lognorm_scale_from_mode(params[4], params[5])
-        comp1 = params[0] * lognorm.pdf(x, params[2], scale=scale1)
-        comp2 = params[3] * lognorm.pdf(x, params[5], scale=scale2)
-    else:
-        comp1 = params[0] * norm.pdf(x, loc=params[1], scale=params[2])
-        comp2 = params[3] * norm.pdf(x, loc=params[4], scale=params[5])
-    baseline = np.full_like(comp1, params[6])
-    return comp1, comp2, baseline
+    x: np.ndarray, params: np.ndarray, model_ib: ModelType, model_cell: ModelType
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Evaluate both peak components given their model types."""
+    n1 = _params_per_peak(model_ib)
+    comp1 = _eval_single_peak(x, model_ib, params[:n1])
+    comp2 = _eval_single_peak(x, model_cell, params[n1:])
+    return comp1, comp2
 
 
 def _single_component(
-    x: np.ndarray, params: np.ndarray, opts: AnalysisOptions
-) -> Tuple[np.ndarray, np.ndarray]:
-    if opts.model == "lognormal":
-        scale = _lognorm_scale_from_mode(params[1], params[2])
-        comp = params[0] * lognorm.pdf(x, params[2], scale=scale)
-    else:
-        comp = params[0] * norm.pdf(x, loc=params[1], scale=params[2])
-    baseline = np.full_like(comp, params[3])
-    return comp, baseline
+    x: np.ndarray, params: np.ndarray, model_type: ModelType
+) -> np.ndarray:
+    return _eval_single_peak(x, model_type, params)
 
 
 def _tight_bounds_from_hint(
@@ -707,10 +803,11 @@ def _cell_component_first(m1: float, m2: float, opts: AnalysisOptions) -> bool:
 
 
 def _determine_cell_first(
-    popt: np.ndarray, hints: PeakHints, opts: AnalysisOptions
+    popt: np.ndarray, hints: PeakHints, opts: AnalysisOptions, model_ib: ModelType, model_cell: ModelType
 ) -> bool:
     m1 = popt[1]
-    m2 = popt[4]
+    n1 = _params_per_peak(model_ib)
+    m2 = popt[n1 + 1]
     cell_hint = hints.get("cell") if hints else None
     ib_hint = hints.get("ib") if hints else None
 

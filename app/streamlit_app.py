@@ -157,7 +157,7 @@ def _render_sidebar() -> Tuple[
 
         # Model settings section
         with st.sidebar.expander("⚙️ Model Settings", expanded=True):
-            model_options = ("gaussian", "lognormal", "autofit")
+            model_options = ("gaussian", "lognormal", "splitgaussian", "autofit")
             default_model = st.session_state.get("model", "autofit")
             default_index = (
                 model_options.index(default_model)
@@ -172,6 +172,34 @@ def _render_sidebar() -> Tuple[
                 key="model",
             )
             compare_models = model == "autofit"
+
+            # Option to use different models per peak
+            use_mixed_models = st.checkbox(
+                "Use different models per peak",
+                value=st.session_state.get("use_mixed_models", False),
+                key="use_mixed_models",
+                disabled=compare_models,
+                help="Fit IB and cell peaks with different model types (autofit does this automatically)",
+            )
+
+            if use_mixed_models and not compare_models:
+                st.markdown("**Model per peak:**")
+                single_model_options = ("gaussian", "lognormal", "splitgaussian")
+                model_ib = st.selectbox(
+                    "IB peak model",
+                    single_model_options,
+                    index=single_model_options.index(model) if model in single_model_options else 0,
+                    key="model_ib",
+                )
+                model_cell = st.selectbox(
+                    "Cell peak model",
+                    single_model_options,
+                    index=single_model_options.index(model) if model in single_model_options else 0,
+                    key="model_cell",
+                )
+            else:
+                model_ib = None
+                model_cell = None
 
             st.markdown("**Peak Parameters**")
             mu_ib = st.number_input(
@@ -345,51 +373,67 @@ def _analyze_uploads(
                 measurement = _normalize_data(measurement)
 
             if compare_models:
-                # Fit both models and choose the better one
-                gaussian_result = analyze_measurement(
-                    measurement,
-                    AnalysisOptions(
-                        model="gaussian",
-                        mu_ib_um=options.mu_ib_um,
-                        mu_cell_um=options.mu_cell_um,
-                        allow_shift_fraction=options.allow_shift_fraction,
-                        second_peak_min_frac=options.second_peak_min_frac,
-                        max_peak_fwhm_um=options.max_peak_fwhm_um,
-                    ),
-                )
+                # Autofit: try all model combinations and pick the best
+                model_types = ["gaussian", "lognormal", "splitgaussian"]
+                best_r2 = -float("inf")
+                best_result = None
 
-                lognormal_result = analyze_measurement(
-                    measurement,
-                    AnalysisOptions(
-                        model="lognormal",
-                        mu_ib_um=options.mu_ib_um,
-                        mu_cell_um=options.mu_cell_um,
-                        allow_shift_fraction=options.allow_shift_fraction,
-                        second_peak_min_frac=options.second_peak_min_frac,
-                        max_peak_fwhm_um=options.max_peak_fwhm_um,
-                    ),
-                )
+                for model_ib in model_types:
+                    for model_cell in model_types:
+                        try:
+                            result = analyze_measurement(
+                                measurement,
+                                AnalysisOptions(
+                                    model="gaussian",  # base model (overridden by model_ib/cell)
+                                    model_ib=model_ib,  # type: ignore[arg-type]
+                                    model_cell=model_cell,  # type: ignore[arg-type]
+                                    mu_ib_um=options.mu_ib_um,
+                                    mu_cell_um=options.mu_cell_um,
+                                    allow_shift_fraction=options.allow_shift_fraction,
+                                    second_peak_min_frac=options.second_peak_min_frac,
+                                    max_peak_fwhm_um=options.max_peak_fwhm_um,
+                                ),
+                            )
+                            r2 = _calculate_r_squared(result)
+                            if r2 > best_r2:
+                                best_r2 = r2
+                                best_result = result
+                        except Exception:
+                            # Skip failed fits
+                            continue
 
-                # Calculate R² for both models
-                gaussian_r2 = _calculate_r_squared(gaussian_result)
-                lognormal_r2 = _calculate_r_squared(lognormal_result)
-
-                # Choose the better model
-                if gaussian_r2 > lognormal_r2:
-                    analysis = gaussian_result
-                else:
-                    analysis = lognormal_result
+                if best_result is None:
+                    raise RuntimeError("All autofit attempts failed")
+                analysis = best_result
             else:
                 # Use selected model (but not "autofit" since that's handled above)
                 actual_model = "gaussian" if model == "autofit" else model
-                actual_options = AnalysisOptions(
-                    model=actual_model,  # type: ignore[arg-type]
-                    mu_ib_um=options.mu_ib_um,
-                    mu_cell_um=options.mu_cell_um,
-                    allow_shift_fraction=options.allow_shift_fraction,
-                    second_peak_min_frac=options.second_peak_min_frac,
-                    max_peak_fwhm_um=options.max_peak_fwhm_um,
-                )
+
+                # Check if mixed models are enabled
+                use_mixed = st.session_state.get("use_mixed_models", False)
+                model_ib_val = st.session_state.get("model_ib")
+                model_cell_val = st.session_state.get("model_cell")
+
+                if use_mixed and model_ib_val and model_cell_val:
+                    actual_options = AnalysisOptions(
+                        model=actual_model,  # type: ignore[arg-type]
+                        model_ib=model_ib_val,  # type: ignore[arg-type]
+                        model_cell=model_cell_val,  # type: ignore[arg-type]
+                        mu_ib_um=options.mu_ib_um,
+                        mu_cell_um=options.mu_cell_um,
+                        allow_shift_fraction=options.allow_shift_fraction,
+                        second_peak_min_frac=options.second_peak_min_frac,
+                        max_peak_fwhm_um=options.max_peak_fwhm_um,
+                    )
+                else:
+                    actual_options = AnalysisOptions(
+                        model=actual_model,  # type: ignore[arg-type]
+                        mu_ib_um=options.mu_ib_um,
+                        mu_cell_um=options.mu_cell_um,
+                        allow_shift_fraction=options.allow_shift_fraction,
+                        second_peak_min_frac=options.second_peak_min_frac,
+                        max_peak_fwhm_um=options.max_peak_fwhm_um,
+                    )
                 analysis = analyze_measurement(measurement, actual_options)
 
             results.append((file.name, analysis))
@@ -599,7 +643,7 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
         title += " (Normalized Data)"
 
     st.subheader(title)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_fit_overview(
@@ -704,7 +748,7 @@ def _render_fit_overview(
         title += " (Normalized Data)"
 
     st.subheader(title)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_plot(
@@ -818,7 +862,7 @@ def _render_plot(
         title += " (Normalized Data)"
 
     st.subheader(title)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFrame:
@@ -906,7 +950,7 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
 
     styled_summary = styled_summary.map(highlight_r_squared, subset=["r_squared"])  # type: ignore[arg-type]
 
-    st.dataframe(styled_summary)
+    st.dataframe(styled_summary, width="stretch")
 
     # Add fit quality legend
     st.markdown("""
@@ -991,11 +1035,14 @@ def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
     for label, analysis in entries:
         measurement = analysis.measurement
         with st.expander(label):
-            meta_df = pd.DataFrame(
-                sorted(measurement.metadata.items()), columns=["Field", "Value"]
-            )
+            # Convert all values to strings to avoid Arrow serialization issues with mixed types
+            meta_items = [
+                (k, str(v) if not isinstance(v, str) else v)
+                for k, v in sorted(measurement.metadata.items())
+            ]
+            meta_df = pd.DataFrame(meta_items, columns=["Field", "Value"])
             st.markdown("**Metadata**")
-            st.dataframe(meta_df, hide_index=True, use_container_width=True)
+            st.dataframe(meta_df, hide_index=True, width="stretch")
 
             st.markdown("**Observed trace (first 15 points)**")
             preview = analysis.observed.head(15)[
@@ -1007,7 +1054,7 @@ def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
                     "ibs_component_ug",
                 ]
             ]
-            st.dataframe(preview, use_container_width=True)
+            st.dataframe(preview, width="stretch")
 
 
 def _render_overview_tab(
@@ -1068,7 +1115,7 @@ def _render_individual_samples_tab(
                         view_mode,
                         sample_name,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
 
 
 def _create_individual_sample_plot(
