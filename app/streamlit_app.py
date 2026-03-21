@@ -9,11 +9,18 @@ import pandas as pd
 import plotly.graph_objects as go  # type: ignore[import-untyped]
 import streamlit as st
 
-# Add src directory to path to ensure lysosense package can be imported
-# This is necessary for Streamlit Cloud deployment where the package is in src/
-src_path = str(Path(__file__).parent.parent / "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+# Import the repo's `src/lysosense` package, not an older copy from site-packages.
+# Streamlit (re)runs this file with sys.path already populated; if `src` is present
+# but not first, a pip-installed `lysosense` can win and lack newer fields such as
+# `use_gated_two_peak` on AnalysisOptions.
+_repo_root = Path(__file__).resolve().parent.parent
+_src = str(_repo_root / "src")
+if _src in sys.path:
+    sys.path.remove(_src)
+sys.path.insert(0, _src)
+for _name in list(sys.modules):
+    if _name == "lysosense" or _name.startswith("lysosense."):
+        del sys.modules[_name]
 
 try:
     from streamlit.runtime.uploaded_file_manager import UploadedFile  # noqa: E402
