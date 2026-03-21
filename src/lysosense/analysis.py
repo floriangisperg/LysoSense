@@ -58,6 +58,34 @@ class AnalysisOptions:
     dense_points: int = 1200
     max_peak_fwhm_um: Optional[float] = None
 
+    # --- Gated 2-peak decision parameters ---
+    # Enable the gated 2-peak decision logic (recommended: True)
+    use_gated_two_peak: bool = True
+    # Pre-fit gate: residual peak prominence threshold (in units of noise sigma)
+    residual_prominence_sigma: float = 3.0
+    # Pre-fit gate: minimum distance from main peak center (um)
+    residual_min_distance_um: float = 0.15
+    # Pre-fit gate: minimum residual area as fraction of total signal area
+    residual_min_area_frac: float = 0.05
+    # Post-fit gate: minimum BIC improvement for 2-peak model (negative = 2-peak better)
+    bic_improvement_threshold: float = -10.0
+    # Post-fit gate: minimum local dominance of second peak (fraction)
+    local_dominance_threshold: float = 0.40
+    # Post-fit gate: minimum second peak area fraction
+    second_peak_area_threshold: float = 0.05
+    # Post-fit gate: minimum peak separation relative to average FWHM
+    min_separation_fwhm_ratio: float = 0.8
+
+    # --- Second peak quality constraints (stricter than main peak) ---
+    # Maximum FWHM for the Cell peak during fitting (um). None = use max_peak_fwhm_um
+    # This is applied as a BOUND during fitting, not just a post-fit check.
+    max_fwhm_second_peak_um: Optional[float] = 0.18
+    # Minimum compactness for second peak: area / FWHM. Set to 0 to disable.
+    min_compactness_second_peak: float = 0.0
+    # Minimum prominence of second peak above the shoulder of main peak (in noise sigma units)
+    # Set to 0 to disable. Note: prominence can be 0 for valid peaks sitting on a shoulder.
+    min_prominence_second_peak_sigma: float = 0.0
+
     def get_model_ib(self) -> ModelType:
         return self.model_ib if self.model_ib else self.model
 
@@ -87,6 +115,266 @@ PeakHints = Dict[str, Optional[_PeakHint]]
 
 class _SecondPeakTooSmall(Exception):
     """Raised when the fitted second peak contributes negligibly."""
+
+
+class _NoResidualPeak(Exception):
+    """Raised when the 1-peak residual has no evidence of a second peak."""
+
+
+class _TwoPeakFitRejected(Exception):
+    """Raised when the 2-peak fit fails post-fit validation checks."""
+
+
+def _estimate_noise_from_residual(residual: np.ndarray) -> float:
+    """
+    Estimate noise level from the 1-peak fit residual using MAD.
+
+    Uses Median Absolute Deviation scaled to match standard deviation
+    for a normal distribution: sigma ≈ 1.4826 * MAD
+    """
+    # Use MAD of residual as robust noise estimate
+    mad = float(np.median(np.abs(residual - np.median(residual))))
+    return max(mad * 1.4826, 1e-9)
+
+
+def _find_residual_peak_candidate(
+    x: np.ndarray,
+    residual: np.ndarray,
+    main_peak_mu: float,
+    opts: AnalysisOptions,
+) -> Optional[Tuple[float, float]]:
+    """
+    Check if the positive residual contains a real peak candidate.
+
+    Returns (peak_position, peak_height) if a valid candidate is found, else None.
+
+    Criteria:
+    - Prominence > noise_sigma * residual_prominence_sigma
+    - Distance from main peak > residual_min_distance_um
+    - Residual area > residual_min_area_frac of total signal area
+    """
+    # Only look at positive residual
+    positive_residual = np.maximum(residual, 0)
+
+    # Estimate noise level
+    noise_sigma = _estimate_noise_from_residual(residual)
+
+    # Check minimum residual area
+    total_signal_area = float(np.trapz(np.maximum(positive_residual, 0), x))
+    residual_area = float(np.trapz(positive_residual, x))
+    if total_signal_area > 0:
+        area_frac = residual_area / total_signal_area
+        # Actually compare residual area to original signal (approximated by residual + fit)
+        # For simplicity, use residual area relative to its own scale
+        if residual_area < opts.residual_min_area_frac * total_signal_area * 10:  # heuristic scaling
+            pass  # Don't reject yet, check other criteria
+
+    # Find peaks in positive residual with minimum prominence
+    min_prominence = noise_sigma * opts.residual_prominence_sigma
+    distance = max(1, len(x) // 200)  # Minimum samples between peaks
+
+    try:
+        peak_indices, properties = find_peaks(
+            positive_residual,
+            prominence=min_prominence,
+            distance=distance,
+            width=2  # Minimum width to avoid single-point spikes
+        )
+    except ValueError:
+        return None
+
+    if len(peak_indices) == 0:
+        return None
+
+    # Filter by distance from main peak
+    valid_candidates = []
+    for idx in peak_indices:
+        peak_x = x[idx]
+        distance_from_main = abs(peak_x - main_peak_mu)
+        if distance_from_main >= opts.residual_min_distance_um:
+            peak_height = positive_residual[idx]
+            # Get prominence from properties
+            prominences = properties.get('prominences', [peak_height])
+            prominence = prominences[list(peak_indices).index(idx)] if idx in peak_indices else peak_height
+            valid_candidates.append((peak_x, peak_height, prominence, distance_from_main))
+
+    if not valid_candidates:
+        return None
+
+    # Return the most prominent candidate
+    valid_candidates.sort(key=lambda c: c[2], reverse=True)
+    best = valid_candidates[0]
+    return (best[0], best[1])
+
+
+def _calculate_bic(
+    y: np.ndarray,
+    y_fit: np.ndarray,
+    n_params: int,
+) -> float:
+    """
+    Calculate Bayesian Information Criterion for a model fit.
+
+    BIC = n * ln(RSS/n) + k * ln(n)
+
+    Where n = number of data points, k = number of parameters, RSS = residual sum of squares.
+    Lower BIC is better.
+    """
+    n = len(y)
+    if n == 0:
+        return float('inf')
+
+    residuals = y - y_fit
+    rss = float(np.sum(residuals ** 2))
+
+    # Avoid log(0)
+    if rss <= 0:
+        rss = 1e-12
+
+    bic = n * np.log(rss / n) + n_params * np.log(n)
+    return float(bic)
+
+
+def _check_local_dominance(
+    x: np.ndarray,
+    peak1: np.ndarray,
+    peak2: np.ndarray,
+    threshold: float,
+) -> bool:
+    """
+    Check if peak2 dominates somewhere locally.
+
+    Returns True if max_x(peak2 / (peak1 + peak2)) > threshold.
+    This ensures the second peak actually "owns" a local region.
+    """
+    total = peak1 + peak2
+    # Avoid division by zero
+    total = np.where(total > 1e-12, total, 1e-12)
+    dominance_ratio = peak2 / total
+
+    max_dominance = float(np.max(dominance_ratio))
+    return max_dominance > threshold
+
+
+def _check_separation(
+    mu1: float,
+    mu2: float,
+    fwhm1: float,
+    fwhm2: float,
+    min_ratio: float,
+) -> bool:
+    """
+    Check if peaks are sufficiently separated.
+
+    Criterion: |mu2 - mu1| / (0.5 * (FWHM1 + FWHM2)) > min_ratio
+    """
+    avg_fwhm = 0.5 * (fwhm1 + fwhm2)
+    if avg_fwhm <= 0:
+        return False
+
+    separation_ratio = abs(mu2 - mu1) / avg_fwhm
+    return separation_ratio > min_ratio
+
+
+def _calculate_fwhm_from_params(
+    model_type: ModelType,
+    params: np.ndarray,
+) -> float:
+    """Calculate FWHM for a peak given its model type and parameters."""
+    if model_type == "lognormal":
+        # For lognormal, FWHM is approximately 2.355 * sigma (approximation)
+        # More accurate: use the shape parameter
+        shape = params[2]
+        mode = params[1]
+        # Approximate FWHM for lognormal
+        return float(2.355 * shape * mode)
+    elif model_type == "splitgaussian":
+        # Use average of left and right sigma
+        sigma_avg = 0.5 * (params[2] + params[3])
+        return float(2.355 * sigma_avg)
+    else:  # gaussian
+        sigma = params[2]
+        return float(2.355 * sigma)
+
+
+def _calculate_compactness(
+    area: float,
+    fwhm: float,
+) -> float:
+    """
+    Calculate peak compactness: area / FWHM.
+
+    Higher compactness = sharper peak. A broad, flat peak will have low compactness
+    even if it has significant area.
+    """
+    if fwhm <= 0:
+        return 0.0
+    return float(area / fwhm)
+
+
+def _calculate_prominence_above_shoulder(
+    x: np.ndarray,
+    peak2: np.ndarray,
+    peak1: np.ndarray,
+    peak2_mu: float,
+) -> float:
+    """
+    Calculate prominence of peak 2 above the shoulder of peak 1.
+
+    The prominence is the height of peak 2 at its center minus the value of peak 1
+    at that position (the "shoulder" of the main peak).
+
+    Returns the prominence in the same units as the signal.
+    """
+    # Find index closest to peak 2's center
+    idx = int(np.argmin(np.abs(x - peak2_mu)))
+
+    # Height of peak 2 at its center
+    peak2_height = float(peak2[idx])
+
+    # Height of peak 1 (the shoulder) at peak 2's position
+    shoulder_height = float(peak1[idx])
+
+    # Prominence is how much peak 2 rises above the shoulder
+    prominence = peak2_height - shoulder_height
+
+    return max(prominence, 0.0)
+
+
+def _check_second_peak_quality(
+    x: np.ndarray,
+    peak1: np.ndarray,
+    peak2: np.ndarray,
+    peak2_area: float,
+    peak2_fwhm: float,
+    peak2_mu: float,
+    noise_sigma: float,
+    opts: AnalysisOptions,
+) -> Tuple[bool, str]:
+    """
+    Check quality constraints specific to the second (smaller) peak.
+
+    Returns (passed, reason) where reason explains why it failed (if it did).
+    """
+    # Check 1: Maximum FWHM for second peak
+    max_fwhm = opts.max_fwhm_second_peak_um
+    if max_fwhm is None:
+        max_fwhm = opts.max_peak_fwhm_um
+    if max_fwhm is not None and peak2_fwhm > max_fwhm:
+        return False, f"Second peak FWHM ({peak2_fwhm:.3f}) exceeds max ({max_fwhm:.3f})"
+
+    # Check 2: Minimum compactness (area / FWHM)
+    compactness = _calculate_compactness(peak2_area, peak2_fwhm)
+    if compactness < opts.min_compactness_second_peak:
+        return False, f"Second peak compactness ({compactness:.1f}) below minimum ({opts.min_compactness_second_peak:.1f})"
+
+    # Check 3: Minimum prominence above shoulder
+    prominence = _calculate_prominence_above_shoulder(x, peak1, peak2, peak2_mu)
+    min_prominence = noise_sigma * opts.min_prominence_second_peak_sigma
+    if prominence < min_prominence:
+        return False, f"Second peak prominence ({prominence:.3f}) below minimum ({min_prominence:.3f})"
+
+    return True, "OK"
 
 
 def analyze_measurement(
@@ -196,8 +484,214 @@ def _fit_curve(
     base_p0, hints = _initial_guesses(x, y, opts)
     A1, mu_ib_guess, A2, mu_cell_guess = base_p0
 
-    # Build full initial params based on model types
+    # Build initial params for single peak (IB peak)
     p1 = _single_peak_initial_params(model_ib, A1, mu_ib_guess, hints.get("ib"), opts, is_ib=True)
+
+    # --- Step 1: Always fit 1-peak model first ---
+    single_bounds = _bounds_for_one_peak(opts, hints, model_ib)
+    single_model = _one_peak_model(model_ib)
+
+    try:
+        popt_1peak, pcov_1peak = curve_fit(
+            single_model, x, y, p0=p1, bounds=single_bounds, maxfev=100000
+        )
+    except (RuntimeError, ValueError):
+        # If even 1-peak fit fails, we have a problem
+        raise ValueError("Failed to fit even a single-peak model")
+
+    # Calculate 1-peak fit and residual
+    y_fit_1peak = _eval_single_peak(x, model_ib, popt_1peak)
+    residual = y - y_fit_1peak
+    main_peak_mu = float(popt_1peak[1])
+
+    # Calculate BIC for 1-peak model
+    n_params_1peak = _params_per_peak(model_ib)
+    bic_1peak = _calculate_bic(y, y_fit_1peak, n_params_1peak)
+
+    # --- Step 2: Check if gated 2-peak decision is enabled ---
+    if not opts.use_gated_two_peak:
+        # Fall back to original behavior
+        return _fit_two_peak_legacy(x, y, opts, hints, model_ib, model_cell,
+                                     p1, popt_1peak, pcov_1peak, bic_1peak)
+
+    # --- Step 3: Pre-fit gate - check residual for second peak evidence ---
+    residual_candidate = _find_residual_peak_candidate(x, residual, main_peak_mu, opts)
+
+    if residual_candidate is None:
+        # No evidence of second peak in residual - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # --- Step 4: Attempt 2-peak fit ---
+    p2 = _single_peak_initial_params(model_cell, A2, mu_cell_guess, hints.get("cell"), opts, is_ib=False)
+    p0 = p1 + p2  # type: ignore[assignment]
+
+    bounds = _bounds_for_two_peak(opts, hints, model_ib, model_cell)
+    model_fn = _two_peak_model(opts, model_ib, model_cell)
+
+    try:
+        popt_2peak, pcov_2peak = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
+    except (RuntimeError, ValueError):
+        # 2-peak fit failed - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # --- Step 5: Post-fit gates ---
+    comp1, comp2 = _component_arrays_raw(x, popt_2peak, model_ib, model_cell)
+    y_fit_2peak = comp1 + comp2
+
+    # Gate A: BIC improvement
+    n_params_2peak = _params_per_peak(model_ib) + _params_per_peak(model_cell)
+    bic_2peak = _calculate_bic(y, y_fit_2peak, n_params_2peak)
+    delta_bic = bic_2peak - bic_1peak
+
+    if delta_bic >= opts.bic_improvement_threshold:
+        # BIC doesn't improve enough - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # Gate B: Area fraction of second peak
+    area1 = float(np.trapz(comp1, x))
+    area2 = float(np.trapz(comp2, x))
+    total_area = area1 + area2
+    frac2 = area2 / max(total_area, 1e-12)
+
+    if frac2 < opts.second_peak_area_threshold:
+        # Second peak too small - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # Gate C: Local dominance of second peak
+    if not _check_local_dominance(x, comp1, comp2, opts.local_dominance_threshold):
+        # Second peak doesn't dominate anywhere - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # Gate D: Peak separation (optional but recommended)
+    mu1 = float(popt_2peak[1])
+    n1 = _params_per_peak(model_ib)
+    mu2 = float(popt_2peak[n1 + 1])
+    fwhm1 = _calculate_fwhm_from_params(model_ib, popt_2peak[:n1])
+    fwhm2 = _calculate_fwhm_from_params(model_cell, popt_2peak[n1:])
+
+    if not _check_separation(mu1, mu2, fwhm1, fwhm2, opts.min_separation_fwhm_ratio):
+        # Peaks too close / overlapping - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # Gate E: Second peak quality constraints (stricter than main peak)
+    # Identify which component is the second (smaller) peak
+    area1 = float(np.trapz(comp1, x))
+    area2 = float(np.trapz(comp2, x))
+
+    if area2 <= area1:
+        # comp2 is the smaller peak - apply quality checks to it
+        second_peak = comp2
+        second_peak_area = area2
+        second_peak_fwhm = fwhm2
+        second_peak_mu = mu2
+        main_peak = comp1
+    else:
+        # comp1 is the smaller peak - apply quality checks to it
+        second_peak = comp1
+        second_peak_area = area1
+        second_peak_fwhm = fwhm1
+        second_peak_mu = mu1
+        main_peak = comp2
+
+    # Estimate noise from the 1-peak residual
+    noise_sigma = _estimate_noise_from_residual(residual)
+
+    # Check second peak quality
+    quality_ok, quality_reason = _check_second_peak_quality(
+        x, main_peak, second_peak,
+        second_peak_area, second_peak_fwhm, second_peak_mu,
+        noise_sigma, opts
+    )
+
+    if not quality_ok:
+        # Second peak doesn't meet quality standards - use 1-peak model
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+        }
+
+    # All gates passed - accept 2-peak model
+    cell_first = _determine_cell_first(popt_2peak, hints, opts, model_ib, model_cell)
+    return {
+        "kind": "two",
+        "popt": popt_2peak,
+        "pcov": pcov_2peak,
+        "cell_first": cell_first,
+        "hints": hints,
+        "model_ib": model_ib,
+        "model_cell": model_cell,
+    }
+
+
+def _fit_two_peak_legacy(
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    hints: PeakHints,
+    model_ib: ModelType,
+    model_cell: ModelType,
+    p1: Tuple[float, ...],
+    popt_1peak: np.ndarray,
+    pcov_1peak: np.ndarray,
+    bic_1peak: float,
+) -> _FitResult:
+    """Legacy 2-peak fitting logic (used when gated decision is disabled)."""
+    base_p0, _ = _initial_guesses(x, y, opts)
+    A1, mu_ib_guess, A2, mu_cell_guess = base_p0
+
     p2 = _single_peak_initial_params(model_cell, A2, mu_cell_guess, hints.get("cell"), opts, is_ib=False)
     p0 = p1 + p2  # type: ignore[assignment]
 
@@ -223,16 +717,10 @@ def _fit_curve(
             "model_cell": model_cell,
         }
     except (RuntimeError, ValueError, _SecondPeakTooSmall):
-        single_bounds = _bounds_for_one_peak(opts, hints, model_ib)
-        single_model = _one_peak_model(model_ib)
-        single_p0 = p1
-        popt, pcov = curve_fit(
-            single_model, x, y, p0=single_p0, bounds=single_bounds, maxfev=100000
-        )
         return {
             "kind": "one",
-            "popt": popt,
-            "pcov": pcov,
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
             "cell_first": None,
             "hints": hints,
             "model_ib": model_ib,
@@ -362,15 +850,26 @@ def _single_peak_bounds(
     mode_ref: float,
     is_ib: bool,
 ) -> Tuple[List[float], List[float]]:
-    """Build bounds for a single peak based on its model type."""
-    max_sigma_cap = _sigma_cap_from_fwhm(opts.max_peak_fwhm_um)
+    """Build bounds for a single peak based on its model type.
+
+    Uses tighter FWHM bounds for the Cell peak (is_ib=False) to prevent
+    overly broad fits on the typically smaller second peak.
+    """
+    # Use stricter FWHM limit for Cell peak (the typically smaller second peak)
+    if is_ib:
+        fwhm_limit = opts.max_peak_fwhm_um
+    else:
+        # Cell peak uses the second peak limit if specified, otherwise falls back
+        fwhm_limit = opts.max_fwhm_second_peak_um or opts.max_peak_fwhm_um
+
+    max_sigma_cap = _sigma_cap_from_fwhm(fwhm_limit)
 
     if model_type == "lognormal":
         s_bounds = opts.s_bounds_logn_ib if is_ib else opts.s_bounds_logn_cells
         lo = [0, lo_mu, s_bounds[0]]
         hi = [np.inf, hi_mu, s_bounds[1]]
         # Apply FWHM cap
-        max_shape = _shape_cap_from_fwhm(opts.max_peak_fwhm_um, mode_ref)
+        max_shape = _shape_cap_from_fwhm(fwhm_limit, mode_ref)
         if max_shape is not None:
             hi[2] = min(hi[2], max_shape)
             if hi[2] <= lo[2]:

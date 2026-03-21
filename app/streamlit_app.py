@@ -258,6 +258,113 @@ def _render_sidebar() -> Tuple[
             else:
                 max_peak_width_value = None
 
+            # Gated 2-peak decision settings
+            st.markdown("**2-Peak Detection (Gated)**")
+            use_gated = st.checkbox(
+                "Use gated 2-peak detection",
+                value=True,
+                help="Require evidence of a second peak in the residual before attempting 2-peak fit. Recommended: ON.",
+                key="use_gated",
+            )
+
+            if use_gated:
+                with st.expander("Advanced 2-peak settings", expanded=False):
+                    st.markdown("**Pre-fit gates** (checked before 2-peak fit)")
+                    residual_prominence = st.slider(
+                        "Residual prominence (× noise σ)",
+                        min_value=1.0,
+                        max_value=6.0,
+                        value=3.0,
+                        step=0.5,
+                        help="Minimum prominence of residual peak candidate (higher = stricter)",
+                        key="residual_prominence",
+                    )
+                    residual_distance = st.slider(
+                        "Min residual distance (µm)",
+                        min_value=0.05,
+                        max_value=0.30,
+                        value=0.15,
+                        step=0.01,
+                        help="Minimum distance from main peak for residual candidate",
+                        key="residual_distance",
+                    )
+                    residual_area = st.slider(
+                        "Min residual area (%)",
+                        min_value=1.0,
+                        max_value=10.0,
+                        value=5.0,
+                        step=0.5,
+                        help="Minimum residual area as fraction of total signal",
+                        key="residual_area",
+                    )
+
+                    st.markdown("**Post-fit gates** (checked after 2-peak fit)")
+                    bic_threshold = st.slider(
+                        "BIC improvement threshold",
+                        min_value=-20.0,
+                        max_value=-2.0,
+                        value=-10.0,
+                        step=1.0,
+                        help="2-peak model must improve BIC by this much (more negative = stricter)",
+                        key="bic_threshold",
+                    )
+                    local_dominance = st.slider(
+                        "Local dominance (%)",
+                        min_value=20.0,
+                        max_value=60.0,
+                        value=40.0,
+                        step=5.0,
+                        help="Second peak must dominate this much somewhere locally",
+                        key="local_dominance",
+                    )
+                    second_area = st.slider(
+                        "Min 2nd peak area (%)",
+                        min_value=1.0,
+                        max_value=10.0,
+                        value=5.0,
+                        step=0.5,
+                        help="Minimum area fraction for second peak",
+                        key="second_area",
+                    )
+                    separation_ratio = st.slider(
+                        "Min separation (× avg FWHM)",
+                        min_value=0.3,
+                        max_value=1.5,
+                        value=0.8,
+                        step=0.1,
+                        help="Peak separation relative to average FWHM (higher = stricter)",
+                        key="separation_ratio",
+                    )
+
+                    st.markdown("**Second Peak Quality** (Cell peak bounds)")
+                    max_fwhm_second = st.slider(
+                        "Max Cell peak FWHM (µm)",
+                        min_value=0.08,
+                        max_value=0.30,
+                        value=0.18,
+                        step=0.01,
+                        help="Maximum FWHM for the Cell peak during FITTING. This bounds the optimizer directly.",
+                        key="max_fwhm_second",
+                    )
+                    min_compactness = st.slider(
+                        "Min compactness (area/FWHM)",
+                        min_value=0.0,
+                        max_value=30.0,
+                        value=0.0,
+                        step=1.0,
+                        help="Post-fit check: minimum compactness for second peak. 0 = disabled.",
+                        key="min_compactness",
+                    )
+                    min_prominence_sigma = st.slider(
+                        "Min prominence (× noise σ)",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=0.0,
+                        step=0.5,
+                        help="Post-fit check: minimum prominence above shoulder. 0 = disabled.",
+                        key="min_prominence_sigma",
+                    )
+
         # Visualization section (merged with display options)
         with st.sidebar.expander("📊 Visualization", expanded=True):
             view_mode = st.radio(
@@ -319,6 +426,19 @@ def _render_sidebar() -> Tuple[
         baseline_method = "minimum"
         view_mode = "Combined"
         normalize_data = False
+        # Gated 2-peak defaults
+        use_gated = True
+        residual_prominence = 3.0
+        residual_distance = 0.15
+        residual_area = 5.0
+        bic_threshold = -10.0
+        local_dominance = 40.0
+        second_area = 5.0
+        separation_ratio = 0.8
+        # Second peak quality defaults
+        max_fwhm_second = 0.18
+        min_compactness = 0.0
+        min_prominence_sigma = 0.0
 
     # Don't create AnalysisOptions here anymore since it depends on the model choice
     # Create a placeholder with default values that will be overridden in analysis
@@ -327,6 +447,22 @@ def _render_sidebar() -> Tuple[
         if (limit_peak_width and max_peak_width_value)
         else None
     )
+
+    # Get gated parameters from session state (or use defaults if not set)
+    use_gated = st.session_state.get("use_gated", True)
+    residual_prominence = st.session_state.get("residual_prominence", 3.0)
+    residual_distance = st.session_state.get("residual_distance", 0.15)
+    residual_area = st.session_state.get("residual_area", 5.0)
+    bic_threshold = st.session_state.get("bic_threshold", -10.0)
+    local_dominance = st.session_state.get("local_dominance", 40.0)
+    second_area = st.session_state.get("second_area", 5.0)
+    separation_ratio = st.session_state.get("separation_ratio", 0.8)
+
+    # Second peak quality parameters
+    max_fwhm_second = st.session_state.get("max_fwhm_second", 0.18)
+    min_compactness = st.session_state.get("min_compactness", 0.0)
+    min_prominence_sigma = st.session_state.get("min_prominence_sigma", 0.0)
+
     options = AnalysisOptions(
         model="gaussian",  # placeholder, will be overridden
         mu_ib_um=float(mu_ib),
@@ -334,6 +470,18 @@ def _render_sidebar() -> Tuple[
         allow_shift_fraction=allow_shift / 100.0,
         second_peak_min_frac=float(second_peak_percent),
         max_peak_fwhm_um=peak_width_cap,
+        use_gated_two_peak=use_gated,
+        residual_prominence_sigma=float(residual_prominence),
+        residual_min_distance_um=float(residual_distance),
+        residual_min_area_frac=float(residual_area) / 100.0,
+        bic_improvement_threshold=float(bic_threshold),
+        local_dominance_threshold=float(local_dominance) / 100.0,
+        second_peak_area_threshold=float(second_area) / 100.0,
+        min_separation_fwhm_ratio=float(separation_ratio),
+        # Second peak quality constraints
+        max_fwhm_second_peak_um=float(max_fwhm_second),
+        min_compactness_second_peak=float(min_compactness),
+        min_prominence_second_peak_sigma=float(min_prominence_sigma),
     )
     return (
         options,
@@ -392,6 +540,19 @@ def _analyze_uploads(
                                     allow_shift_fraction=options.allow_shift_fraction,
                                     second_peak_min_frac=options.second_peak_min_frac,
                                     max_peak_fwhm_um=options.max_peak_fwhm_um,
+                                    # Gated 2-peak parameters
+                                    use_gated_two_peak=options.use_gated_two_peak,
+                                    residual_prominence_sigma=options.residual_prominence_sigma,
+                                    residual_min_distance_um=options.residual_min_distance_um,
+                                    residual_min_area_frac=options.residual_min_area_frac,
+                                    bic_improvement_threshold=options.bic_improvement_threshold,
+                                    local_dominance_threshold=options.local_dominance_threshold,
+                                    second_peak_area_threshold=options.second_peak_area_threshold,
+                                    min_separation_fwhm_ratio=options.min_separation_fwhm_ratio,
+                                    # Second peak quality constraints
+                                    max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
+                                    min_compactness_second_peak=options.min_compactness_second_peak,
+                                    min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
                                 ),
                             )
                             r2 = _calculate_r_squared(result)
@@ -424,6 +585,19 @@ def _analyze_uploads(
                         allow_shift_fraction=options.allow_shift_fraction,
                         second_peak_min_frac=options.second_peak_min_frac,
                         max_peak_fwhm_um=options.max_peak_fwhm_um,
+                        # Gated 2-peak parameters
+                        use_gated_two_peak=options.use_gated_two_peak,
+                        residual_prominence_sigma=options.residual_prominence_sigma,
+                        residual_min_distance_um=options.residual_min_distance_um,
+                        residual_min_area_frac=options.residual_min_area_frac,
+                        bic_improvement_threshold=options.bic_improvement_threshold,
+                        local_dominance_threshold=options.local_dominance_threshold,
+                        second_peak_area_threshold=options.second_peak_area_threshold,
+                        min_separation_fwhm_ratio=options.min_separation_fwhm_ratio,
+                        # Second peak quality constraints
+                        max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
+                        min_compactness_second_peak=options.min_compactness_second_peak,
+                        min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
                     )
                 else:
                     actual_options = AnalysisOptions(
@@ -433,6 +607,19 @@ def _analyze_uploads(
                         allow_shift_fraction=options.allow_shift_fraction,
                         second_peak_min_frac=options.second_peak_min_frac,
                         max_peak_fwhm_um=options.max_peak_fwhm_um,
+                        # Gated 2-peak parameters
+                        use_gated_two_peak=options.use_gated_two_peak,
+                        residual_prominence_sigma=options.residual_prominence_sigma,
+                        residual_min_distance_um=options.residual_min_distance_um,
+                        residual_min_area_frac=options.residual_min_area_frac,
+                        bic_improvement_threshold=options.bic_improvement_threshold,
+                        local_dominance_threshold=options.local_dominance_threshold,
+                        second_peak_area_threshold=options.second_peak_area_threshold,
+                        min_separation_fwhm_ratio=options.min_separation_fwhm_ratio,
+                        # Second peak quality constraints
+                        max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
+                        min_compactness_second_peak=options.min_compactness_second_peak,
+                        min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
                     )
                 analysis = analyze_measurement(measurement, actual_options)
 
