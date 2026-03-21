@@ -478,14 +478,26 @@ def _render_sidebar() -> Tuple[
         # Gated 2-peak defaults
         use_gated = True
         sensitivity = "Medium (default)"
+        # Second peak quality defaults
+        residual_prominence = 3.0
+        residual_distance = 0.15
+        residual_area = 5.0
+        bic_threshold = -10.0
+        local_dominance = 40.0
+        second_area = 5.0
+        separation_ratio = 0.8
+        max_fwhm_second = 0.18
+        min_compactness = 0.0
+        min_prominence_sigma = 0.0
 
     # Don't create AnalysisOptions here anymore since it depends on the model choice
     # Create a placeholder with default values that will be overridden in analysis
-    peak_width_cap = (
-        float(max_peak_width_value)
-        if (limit_peak_width and max_peak_width_value)
-        else None
-    )
+    peak_width_cap = None
+    if limit_peak_width and max_peak_width_value is not None:
+        try:
+            peak_width_cap = float(max_peak_width_value)
+        except (TypeError, ValueError):
+            peak_width_cap = None
 
     # Get gated parameters from session state (or use defaults if not set)
     use_gated = st.session_state.get("use_gated", True)
