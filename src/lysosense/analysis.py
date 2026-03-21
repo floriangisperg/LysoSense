@@ -160,8 +160,8 @@ def _find_residual_peak_candidate(
     noise_sigma = _estimate_noise_from_residual(residual)
 
     # Check minimum residual area
-    total_signal_area = float(np.trapz(np.maximum(positive_residual, 0), x))
-    residual_area = float(np.trapz(positive_residual, x))
+    total_signal_area = float(np.trapezoid(np.maximum(positive_residual, 0), x))
+    residual_area = float(np.trapezoid(positive_residual, x))
     if total_signal_area > 0:
         area_frac = residual_area / total_signal_area
         # Actually compare residual area to original signal (approximated by residual + fit)
@@ -436,8 +436,8 @@ def _derive_metrics(
     x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
 ) -> Dict[str, float | str | None]:
     total, cells, ibs = _component_arrays(x, fitres, opts)
-    area_cells = float(np.trapz(cells, x))
-    area_ibs = float(np.trapz(ibs, x))
+    area_cells = float(np.trapezoid(cells, x))
+    area_ibs = float(np.trapezoid(ibs, x))
     area_total = max(area_cells + area_ibs, 1e-12)
 
     model_ib = fitres.get("model_ib", opts.get_model_ib())
@@ -572,8 +572,8 @@ def _fit_curve(
         }
 
     # Gate B: Area fraction of second peak
-    area1 = float(np.trapz(comp1, x))
-    area2 = float(np.trapz(comp2, x))
+    area1 = float(np.trapezoid(comp1, x))
+    area2 = float(np.trapezoid(comp2, x))
     total_area = area1 + area2
     frac2 = area2 / max(total_area, 1e-12)
 
@@ -623,8 +623,8 @@ def _fit_curve(
 
     # Gate E: Second peak quality constraints (stricter than main peak)
     # Identify which component is the second (smaller) peak
-    area1 = float(np.trapz(comp1, x))
-    area2 = float(np.trapz(comp2, x))
+    area1 = float(np.trapezoid(comp1, x))
+    area2 = float(np.trapezoid(comp2, x))
 
     if area2 <= area1:
         # comp2 is the smaller peak - apply quality checks to it
@@ -701,8 +701,8 @@ def _fit_two_peak_legacy(
     try:
         popt, pcov = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
         comp1, comp2 = _component_arrays_raw(x, popt, model_ib, model_cell)
-        area1 = float(np.trapz(comp1, x))
-        area2 = float(np.trapz(comp2, x))
+        area1 = float(np.trapezoid(comp1, x))
+        area2 = float(np.trapezoid(comp2, x))
         frac2 = area2 / max(area1 + area2, 1e-12)
         if frac2 < opts.second_peak_min_frac:
             raise _SecondPeakTooSmall
