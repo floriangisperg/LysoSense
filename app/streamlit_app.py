@@ -259,7 +259,7 @@ def _render_sidebar() -> Tuple[
                 max_peak_width_value = None
 
             # Gated 2-peak decision settings
-            st.markdown("**2-Peak Detection (Gated)**")
+            st.markdown("**2-Peak Detection**")
             use_gated = st.checkbox(
                 "Use gated 2-peak detection",
                 value=True,
@@ -268,103 +268,151 @@ def _render_sidebar() -> Tuple[
             )
 
             if use_gated:
-                st.markdown("---")
-                st.markdown("**Advanced 2-peak settings**")
-                st.markdown("**Pre-fit gates** (checked before 2-peak fit)")
-                residual_prominence = st.slider(
-                    "Residual prominence (× noise σ)",
-                    min_value=1.0,
-                    max_value=6.0,
-                    value=3.0,
-                    step=0.5,
-                    help="Minimum prominence of residual peak candidate (higher = stricter)",
-                    key="residual_prominence",
-                )
-                residual_distance = st.slider(
-                    "Min residual distance (µm)",
-                    min_value=0.05,
-                    max_value=0.30,
-                    value=0.15,
-                    step=0.01,
-                    help="Minimum distance from main peak for residual candidate",
-                    key="residual_distance",
-                )
-                residual_area = st.slider(
-                    "Min residual area (%)",
-                    min_value=1.0,
-                    max_value=10.0,
-                    value=5.0,
-                    step=0.5,
-                    help="Minimum residual area as fraction of total signal",
-                    key="residual_area",
+                # Sensitivity presets
+                sensitivity_presets = {
+                    "Low (strict)": {
+                        "residual_prominence": 4.0,
+                        "residual_distance": 0.20,
+                        "residual_area": 8.0,
+                        "bic_threshold": -15.0,
+                        "local_dominance": 50.0,
+                        "second_area": 8.0,
+                        "separation_ratio": 1.0,
+                        "max_fwhm_second": 0.15,
+                        "min_compactness": 5.0,
+                        "min_prominence_sigma": 2.0,
+                    },
+                    "Medium (default)": {
+                        "residual_prominence": 3.0,
+                        "residual_distance": 0.15,
+                        "residual_area": 5.0,
+                        "bic_threshold": -10.0,
+                        "local_dominance": 40.0,
+                        "second_area": 5.0,
+                        "separation_ratio": 0.8,
+                        "max_fwhm_second": 0.18,
+                        "min_compactness": 0.0,
+                        "min_prominence_sigma": 0.0,
+                    },
+                    "High (sensitive)": {
+                        "residual_prominence": 2.0,
+                        "residual_distance": 0.10,
+                        "residual_area": 3.0,
+                        "bic_threshold": -5.0,
+                        "local_dominance": 30.0,
+                        "second_area": 3.0,
+                        "separation_ratio": 0.5,
+                        "max_fwhm_second": 0.22,
+                        "min_compactness": 0.0,
+                        "min_prominence_sigma": 0.0,
+                    },
+                }
+
+                sensitivity = st.select_slider(
+                    "Sensitivity",
+                    options=["Low (strict)", "Medium (default)", "High (sensitive)", "Custom"],
+                    value="Medium (default)",
+                    key="sensitivity",
+                    help="Low = fewer false positives, High = catch more 2-peaks. Select 'Custom' to adjust individual parameters.",
                 )
 
-                st.markdown("**Post-fit gates** (checked after 2-peak fit)")
-                bic_threshold = st.slider(
-                    "BIC improvement threshold",
-                    min_value=-20.0,
-                    max_value=-2.0,
-                    value=-10.0,
-                    step=1.0,
-                    help="2-peak model must improve BIC by this much (more negative = stricter)",
-                    key="bic_threshold",
-                )
-                local_dominance = st.slider(
-                    "Local dominance (%)",
-                    min_value=20.0,
-                    max_value=60.0,
-                    value=40.0,
-                    step=5.0,
-                    help="Second peak must dominate this much somewhere locally",
-                    key="local_dominance",
-                )
-                second_area = st.slider(
-                    "Min 2nd peak area (%)",
-                    min_value=1.0,
-                    max_value=10.0,
-                    value=5.0,
-                    step=0.5,
-                    help="Minimum area fraction for second peak",
-                    key="second_area",
-                )
-                separation_ratio = st.slider(
-                    "Min separation (× avg FWHM)",
-                    min_value=0.3,
-                    max_value=1.5,
-                    value=0.8,
-                    step=0.1,
-                    help="Peak separation relative to average FWHM (higher = stricter)",
-                    key="separation_ratio",
-                )
+                if sensitivity == "Custom":
+                    st.markdown("---")
+                    st.markdown("**Pre-fit gates** (checked before 2-peak fit)")
+                    residual_prominence = st.slider(
+                        "Residual prominence (× noise σ)",
+                        min_value=1.0,
+                        max_value=6.0,
+                        value=3.0,
+                        step=0.5,
+                        help="Minimum prominence of residual peak candidate (higher = stricter)",
+                        key="residual_prominence",
+                    )
+                    residual_distance = st.slider(
+                        "Min residual distance (µm)",
+                        min_value=0.05,
+                        max_value=0.30,
+                        value=0.15,
+                        step=0.01,
+                        help="Minimum distance from main peak for residual candidate",
+                        key="residual_distance",
+                    )
+                    residual_area = st.slider(
+                        "Min residual area (%)",
+                        min_value=1.0,
+                        max_value=10.0,
+                        value=5.0,
+                        step=0.5,
+                        help="Minimum residual area as fraction of total signal",
+                        key="residual_area",
+                    )
 
-                st.markdown("**Second Peak Quality** (Cell peak bounds)")
-                max_fwhm_second = st.slider(
-                    "Max Cell peak FWHM (µm)",
-                    min_value=0.08,
-                    max_value=0.30,
-                    value=0.18,
-                    step=0.01,
-                    help="Maximum FWHM for the Cell peak during FITTING. This bounds the optimizer directly.",
-                    key="max_fwhm_second",
-                )
-                min_compactness = st.slider(
-                    "Min compactness (area/FWHM)",
-                    min_value=0.0,
-                    max_value=30.0,
-                    value=0.0,
-                    step=1.0,
-                    help="Post-fit check: minimum compactness for second peak. 0 = disabled.",
-                    key="min_compactness",
-                )
-                min_prominence_sigma = st.slider(
-                    "Min prominence (× noise σ)",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=0.0,
-                    step=0.5,
-                    help="Post-fit check: minimum prominence above shoulder. 0 = disabled.",
-                    key="min_prominence_sigma",
-                )
+                    st.markdown("**Post-fit gates** (checked after 2-peak fit)")
+                    bic_threshold = st.slider(
+                        "BIC improvement threshold",
+                        min_value=-20.0,
+                        max_value=-2.0,
+                        value=-10.0,
+                        step=1.0,
+                        help="2-peak model must improve BIC by this much (more negative = stricter)",
+                        key="bic_threshold",
+                    )
+                    local_dominance = st.slider(
+                        "Local dominance (%)",
+                        min_value=20.0,
+                        max_value=60.0,
+                        value=40.0,
+                        step=5.0,
+                        help="Second peak must dominate this much somewhere locally",
+                        key="local_dominance",
+                    )
+                    second_area = st.slider(
+                        "Min 2nd peak area (%)",
+                        min_value=1.0,
+                        max_value=10.0,
+                        value=5.0,
+                        step=0.5,
+                        help="Minimum area fraction for second peak",
+                        key="second_area",
+                    )
+                    separation_ratio = st.slider(
+                        "Min separation (× avg FWHM)",
+                        min_value=0.3,
+                        max_value=1.5,
+                        value=0.8,
+                        step=0.1,
+                        help="Peak separation relative to average FWHM (higher = stricter)",
+                        key="separation_ratio",
+                    )
+
+                    st.markdown("**Second Peak Quality** (Cell peak bounds)")
+                    max_fwhm_second = st.slider(
+                        "Max Cell peak FWHM (µm)",
+                        min_value=0.08,
+                        max_value=0.30,
+                        value=0.18,
+                        step=0.01,
+                        help="Maximum FWHM for the Cell peak during FITTING. This bounds the optimizer directly.",
+                        key="max_fwhm_second",
+                    )
+                    min_compactness = st.slider(
+                        "Min compactness (area/FWHM)",
+                        min_value=0.0,
+                        max_value=30.0,
+                        value=0.0,
+                        step=1.0,
+                        help="Post-fit check: minimum compactness for second peak. 0 = disabled.",
+                        key="min_compactness",
+                    )
+                    min_prominence_sigma = st.slider(
+                        "Min prominence (× noise σ)",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=0.0,
+                        step=0.5,
+                        help="Post-fit check: minimum prominence above shoulder. 0 = disabled.",
+                        key="min_prominence_sigma",
+                    )
 
         # Visualization section (merged with display options)
         with st.sidebar.expander("📊 Visualization", expanded=True):
@@ -429,17 +477,7 @@ def _render_sidebar() -> Tuple[
         normalize_data = False
         # Gated 2-peak defaults
         use_gated = True
-        residual_prominence = 3.0
-        residual_distance = 0.15
-        residual_area = 5.0
-        bic_threshold = -10.0
-        local_dominance = 40.0
-        second_area = 5.0
-        separation_ratio = 0.8
-        # Second peak quality defaults
-        max_fwhm_second = 0.18
-        min_compactness = 0.0
-        min_prominence_sigma = 0.0
+        sensitivity = "Medium (default)"
 
     # Don't create AnalysisOptions here anymore since it depends on the model choice
     # Create a placeholder with default values that will be overridden in analysis
@@ -451,18 +489,73 @@ def _render_sidebar() -> Tuple[
 
     # Get gated parameters from session state (or use defaults if not set)
     use_gated = st.session_state.get("use_gated", True)
-    residual_prominence = st.session_state.get("residual_prominence", 3.0)
-    residual_distance = st.session_state.get("residual_distance", 0.15)
-    residual_area = st.session_state.get("residual_area", 5.0)
-    bic_threshold = st.session_state.get("bic_threshold", -10.0)
-    local_dominance = st.session_state.get("local_dominance", 40.0)
-    second_area = st.session_state.get("second_area", 5.0)
-    separation_ratio = st.session_state.get("separation_ratio", 0.8)
 
-    # Second peak quality parameters
-    max_fwhm_second = st.session_state.get("max_fwhm_second", 0.18)
-    min_compactness = st.session_state.get("min_compactness", 0.0)
-    min_prominence_sigma = st.session_state.get("min_prominence_sigma", 0.0)
+    # Sensitivity presets
+    sensitivity_presets = {
+        "Low (strict)": {
+            "residual_prominence": 4.0,
+            "residual_distance": 0.20,
+            "residual_area": 8.0,
+            "bic_threshold": -15.0,
+            "local_dominance": 50.0,
+            "second_area": 8.0,
+            "separation_ratio": 1.0,
+            "max_fwhm_second": 0.15,
+            "min_compactness": 5.0,
+            "min_prominence_sigma": 2.0,
+        },
+        "Medium (default)": {
+            "residual_prominence": 3.0,
+            "residual_distance": 0.15,
+            "residual_area": 5.0,
+            "bic_threshold": -10.0,
+            "local_dominance": 40.0,
+            "second_area": 5.0,
+            "separation_ratio": 0.8,
+            "max_fwhm_second": 0.18,
+            "min_compactness": 0.0,
+            "min_prominence_sigma": 0.0,
+        },
+        "High (sensitive)": {
+            "residual_prominence": 2.0,
+            "residual_distance": 0.10,
+            "residual_area": 3.0,
+            "bic_threshold": -5.0,
+            "local_dominance": 30.0,
+            "second_area": 3.0,
+            "separation_ratio": 0.5,
+            "max_fwhm_second": 0.22,
+            "min_compactness": 0.0,
+            "min_prominence_sigma": 0.0,
+        },
+    }
+
+    sensitivity = st.session_state.get("sensitivity", "Medium (default)")
+    if sensitivity in sensitivity_presets:
+        # Use preset values
+        preset = sensitivity_presets[sensitivity]
+        residual_prominence = preset["residual_prominence"]
+        residual_distance = preset["residual_distance"]
+        residual_area = preset["residual_area"]
+        bic_threshold = preset["bic_threshold"]
+        local_dominance = preset["local_dominance"]
+        second_area = preset["second_area"]
+        separation_ratio = preset["separation_ratio"]
+        max_fwhm_second = preset["max_fwhm_second"]
+        min_compactness = preset["min_compactness"]
+        min_prominence_sigma = preset["min_prominence_sigma"]
+    else:
+        # Use custom values from session state
+        residual_prominence = st.session_state.get("residual_prominence", 3.0)
+        residual_distance = st.session_state.get("residual_distance", 0.15)
+        residual_area = st.session_state.get("residual_area", 5.0)
+        bic_threshold = st.session_state.get("bic_threshold", -10.0)
+        local_dominance = st.session_state.get("local_dominance", 40.0)
+        second_area = st.session_state.get("second_area", 5.0)
+        separation_ratio = st.session_state.get("separation_ratio", 0.8)
+        max_fwhm_second = st.session_state.get("max_fwhm_second", 0.18)
+        min_compactness = st.session_state.get("min_compactness", 0.0)
+        min_prominence_sigma = st.session_state.get("min_prominence_sigma", 0.0)
 
     options = AnalysisOptions(
         model="gaussian",  # placeholder, will be overridden
