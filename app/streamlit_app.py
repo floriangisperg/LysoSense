@@ -831,7 +831,7 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
         title += " (Normalized Data)"
 
     st.subheader(title)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_fit_overview(
@@ -936,7 +936,7 @@ def _render_fit_overview(
         title += " (Normalized Data)"
 
     st.subheader(title)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_plot(
@@ -1050,7 +1050,7 @@ def _render_plot(
         title += " (Normalized Data)"
 
     st.subheader(title)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFrame:
@@ -1138,7 +1138,7 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
 
     styled_summary = styled_summary.map(highlight_r_squared, subset=["r_squared"])  # type: ignore[arg-type]
 
-    st.dataframe(styled_summary, width="stretch")
+    st.dataframe(styled_summary, use_container_width=True)
 
     # Add fit quality legend
     st.markdown("""
@@ -1230,7 +1230,7 @@ def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
             ]
             meta_df = pd.DataFrame(meta_items, columns=["Field", "Value"])
             st.markdown("**Metadata**")
-            st.dataframe(meta_df, hide_index=True, width="stretch")
+            st.dataframe(meta_df, hide_index=True, use_container_width=True)
 
             st.markdown("**Observed trace (first 15 points)**")
             preview = analysis.observed.head(15)[
@@ -1242,7 +1242,7 @@ def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
                     "ibs_component_ug",
                 ]
             ]
-            st.dataframe(preview, width="stretch")
+            st.dataframe(preview, use_container_width=True)
 
 
 def _render_overview_tab(
@@ -1303,7 +1303,7 @@ def _render_individual_samples_tab(
                         view_mode,
                         sample_name,
                     )
-                    st.plotly_chart(fig, width="stretch")
+                    st.plotly_chart(fig, use_container_width=True)
 
 
 def _create_individual_sample_plot(
