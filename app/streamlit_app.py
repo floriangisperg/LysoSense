@@ -28,6 +28,16 @@ from lysosense import (  # noqa: E402
 )
 import numpy as np  # noqa: E402
 
+
+def safe_float(value: Any, default: float | None = 0.0) -> float | None:
+    """Safely convert a value to float, returning default on error."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
@@ -507,9 +517,8 @@ def _render_sidebar() -> Tuple[
     # Create a placeholder with default values that will be overridden in analysis
     peak_width_cap = None
     if limit_peak_width and max_peak_width_value is not None:
-        try:
-            peak_width_cap = float(max_peak_width_value)
-        except (TypeError, ValueError):
+        peak_width_cap = safe_float(max_peak_width_value, None)
+        if peak_width_cap == 0.0:  # safe_float returns 0.0 on error by default
             peak_width_cap = None
 
     # Get gated parameters from session state (or use defaults if not set)
@@ -584,23 +593,23 @@ def _render_sidebar() -> Tuple[
 
     options = AnalysisOptions(
         model="gaussian",  # placeholder, will be overridden
-        mu_ib_um=float(mu_ib),
-        mu_cell_um=float(mu_cell),
-        allow_shift_fraction=allow_shift / 100.0,
-        second_peak_min_frac=float(second_peak_percent),
+        mu_ib_um=safe_float(mu_ib, 0.48),
+        mu_cell_um=safe_float(mu_cell, 0.85),
+        allow_shift_fraction=safe_float(allow_shift, 20.0) / 100.0,
+        second_peak_min_frac=safe_float(second_peak_percent, 0.02),
         max_peak_fwhm_um=peak_width_cap,
-        use_gated_two_peak=use_gated,
-        residual_prominence_sigma=float(residual_prominence),
-        residual_min_distance_um=float(residual_distance),
-        residual_min_area_frac=float(residual_area) / 100.0,
-        bic_improvement_threshold=float(bic_threshold),
-        local_dominance_threshold=float(local_dominance) / 100.0,
-        second_peak_area_threshold=float(second_area) / 100.0,
-        min_separation_fwhm_ratio=float(separation_ratio),
+        use_gated_two_peak=bool(use_gated),
+        residual_prominence_sigma=safe_float(residual_prominence, 3.0),
+        residual_min_distance_um=safe_float(residual_distance, 0.15),
+        residual_min_area_frac=safe_float(residual_area, 5.0) / 100.0,
+        bic_improvement_threshold=safe_float(bic_threshold, -10.0),
+        local_dominance_threshold=safe_float(local_dominance, 40.0) / 100.0,
+        second_peak_area_threshold=safe_float(second_area, 5.0) / 100.0,
+        min_separation_fwhm_ratio=safe_float(separation_ratio, 0.8),
         # Second peak quality constraints
-        max_fwhm_second_peak_um=float(max_fwhm_second),
-        min_compactness_second_peak=float(min_compactness),
-        min_prominence_second_peak_sigma=float(min_prominence_sigma),
+        max_fwhm_second_peak_um=safe_float(max_fwhm_second, 0.18),
+        min_compactness_second_peak=safe_float(min_compactness, 0.0),
+        min_prominence_second_peak_sigma=safe_float(min_prominence_sigma, 0.0),
     )
     return (
         options,
