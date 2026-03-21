@@ -413,6 +413,19 @@ def _render_sidebar() -> Tuple[
                         help="Post-fit check: minimum prominence above shoulder. 0 = disabled.",
                         key="min_prominence_sigma",
                     )
+            else:
+                # Default values when gated detection is disabled
+                sensitivity = "Medium (default)"
+                residual_prominence = 3.0
+                residual_distance = 0.15
+                residual_area = 5.0
+                bic_threshold = -10.0
+                local_dominance = 40.0
+                second_area = 5.0
+                separation_ratio = 0.8
+                max_fwhm_second = 0.18
+                min_compactness = 0.0
+                min_prominence_sigma = 0.0
 
         # Visualization section (merged with display options)
         with st.sidebar.expander("📊 Visualization", expanded=True):
