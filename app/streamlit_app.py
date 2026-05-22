@@ -67,6 +67,9 @@ def main() -> None:
         baseline_subtraction,
         baseline_method,
         normalize_data,
+        limit_size_range,
+        size_min_um,
+        size_max_um,
         uploaded_files,
     ) = _render_sidebar()
 
@@ -74,7 +77,14 @@ def main() -> None:
         st.info("📁 Upload .dat files in the sidebar to begin the analysis.")
         return
 
-    results = _analyze_uploads(uploaded_files, options, normalize_data)
+    results = _analyze_uploads(
+        uploaded_files,
+        options,
+        normalize_data,
+        limit_size_range,
+        size_min_um,
+        size_max_um,
+    )
     if not results:
         st.warning("All uploaded files failed to parse. Please verify the file format.")
         return
@@ -127,7 +137,7 @@ def main() -> None:
 
 
 def _render_sidebar() -> Tuple[
-    AnalysisOptions, bool, bool, str, bool, bool, str, bool, List[Any]
+    AnalysisOptions, bool, bool, str, bool, bool, str, bool, bool, float, float, List[Any]
 ]:
     # Data upload section (always expanded)
     with st.sidebar.expander("📁 Data Upload", expanded=True):
@@ -170,6 +180,36 @@ def _render_sidebar() -> Tuple[
             if normalize_data:
                 st.markdown(
                     "**Method**: Max intensity normalization (scales to maximum signal value)"
+                )
+
+            st.markdown("---")  # Separator
+
+            limit_size_range = st.checkbox(
+                "Limit particle-size range for fitting",
+                value=False,
+                help="Restrict analysis to a selected particle-size window. Leave off to use the full uploaded CPS/DCS trace.",
+                key="limit_size_range",
+            )
+            range_col1, range_col2 = st.columns(2)
+            with range_col1:
+                size_min_um = st.number_input(
+                    "Min size (µm)",
+                    value=0.2,
+                    min_value=0.0,
+                    max_value=50.0,
+                    step=0.1,
+                    disabled=not limit_size_range,
+                    key="size_min_um",
+                )
+            with range_col2:
+                size_max_um = st.number_input(
+                    "Max size (µm)",
+                    value=3.0,
+                    min_value=0.1,
+                    max_value=50.0,
+                    step=0.1,
+                    disabled=not limit_size_range,
+                    key="size_max_um",
                 )
 
         # Model settings section
@@ -481,6 +521,9 @@ def _render_sidebar() -> Tuple[
                                 "show_components",
                                 "baseline_subtraction",
                                 "baseline_method",
+                                "limit_size_range",
+                                "size_min_um",
+                                "size_max_um",
                             )
                         ):
                             del st.session_state[key]
@@ -505,6 +548,9 @@ def _render_sidebar() -> Tuple[
         baseline_method = "minimum"
         view_mode = "Combined"
         normalize_data = False
+        limit_size_range = False
+        size_min_um = 0.2
+        size_max_um = 3.0
         # Gated 2-peak defaults
         use_gated = True
         sensitivity = "Medium (default)"
@@ -627,6 +673,9 @@ def _render_sidebar() -> Tuple[
         baseline_subtraction,
         baseline_method,
         normalize_data,
+        bool(limit_size_range),
+        safe_float(size_min_um, 0.2) or 0.2,
+        safe_float(size_max_um, 3.0) or 3.0,
         uploaded_files,
     )
 
@@ -635,6 +684,9 @@ def _analyze_uploads(
     uploaded_files: Sequence[UploadedFile],
     options: AnalysisOptions,
     normalize_data: bool,
+    limit_size_range: bool,
+    size_min_um: float,
+    size_max_um: float,
 ) -> List[Tuple[str, AnalysisResult]]:
     results: List[Tuple[str, AnalysisResult]] = []
     model = st.session_state.get("model", "autofit")
@@ -645,7 +697,10 @@ def _analyze_uploads(
     for file in uploaded_files:
         try:
             measurement = parse_dat_bytes(file.getvalue(), source_name=file.name)
-            measurement = _clip_measurement_range(measurement, 0.2, 1.2)
+            if limit_size_range and size_min_um < size_max_um:
+                measurement = _clip_measurement_range(
+                    measurement, size_min_um, size_max_um
+                )
 
             # Apply baseline subtraction if requested
             if baseline_subtraction:
@@ -951,7 +1006,6 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
         legend_title="Sample",
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
-        xaxis=dict(range=[0.2, 1.2]),
     )
     # Check if any samples are normalized
     normalized_samples = [
@@ -1044,7 +1098,6 @@ def _render_fit_overview(
         legend_title="Samples & Components",
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
-        xaxis=dict(range=[0.2, 1.2]),
         legend=dict(
             groupclick="toggleitem",
             itemclick="toggleothers",
@@ -1158,7 +1211,6 @@ def _render_plot(
         legend_title="Samples & Trace Types",
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
-        xaxis=dict(range=[0.2, 1.2]),
         legend=dict(
             groupclick="toggleitem",
             itemclick="toggleothers",
@@ -1552,7 +1604,6 @@ def _create_individual_sample_plot(
         template="plotly_white",
         margin=dict(l=40, r=10, t=20, b=40),  # Reduced top margin since no title
         height=300,  # Compact height for grid layout
-        xaxis=dict(range=[0.2, 1.2]),
         showlegend=True,
         legend=dict(
             bgcolor="rgba(0,0,0,0)",
