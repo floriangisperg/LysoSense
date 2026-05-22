@@ -347,9 +347,9 @@ def _render_sidebar() -> Tuple[
                         "local_dominance": 40.0,
                         "second_area": 5.0,
                         "separation_ratio": 0.8,
-                        "max_fwhm_second": 0.18,
+                        "max_fwhm_second": 0.25,
                         "min_compactness": 0.0,
-                        "min_prominence_sigma": 0.0,
+                        "min_prominence_sigma": 1.0,
                     },
                     "High (sensitive)": {
                         "residual_prominence": 2.0,
@@ -359,9 +359,9 @@ def _render_sidebar() -> Tuple[
                         "local_dominance": 30.0,
                         "second_area": 3.0,
                         "separation_ratio": 0.5,
-                        "max_fwhm_second": 0.22,
+                        "max_fwhm_second": 0.30,
                         "min_compactness": 0.0,
-                        "min_prominence_sigma": 0.0,
+                        "min_prominence_sigma": 0.5,
                     },
                 }
 
@@ -447,7 +447,7 @@ def _render_sidebar() -> Tuple[
                         "Max Cell peak FWHM (µm)",
                         min_value=0.08,
                         max_value=0.30,
-                        value=0.18,
+                        value=0.25,
                         step=0.01,
                         help="Maximum FWHM for the Cell peak during FITTING. This bounds the optimizer directly.",
                         key="max_fwhm_second",
@@ -465,7 +465,7 @@ def _render_sidebar() -> Tuple[
                         "Min prominence (× noise σ)",
                         min_value=0.0,
                         max_value=5.0,
-                        value=0.0,
+                        value=1.0,
                         step=0.5,
                         help="Post-fit check: minimum prominence above shoulder. 0 = disabled.",
                         key="min_prominence_sigma",
@@ -480,9 +480,9 @@ def _render_sidebar() -> Tuple[
                 local_dominance = 40.0
                 second_area = 5.0
                 separation_ratio = 0.8
-                max_fwhm_second = 0.18
+                max_fwhm_second = 0.25
                 min_compactness = 0.0
-                min_prominence_sigma = 0.0
+                min_prominence_sigma = 1.0
 
         # Visualization section (merged with display options)
         with st.sidebar.expander("📊 Visualization", expanded=True):
@@ -562,9 +562,9 @@ def _render_sidebar() -> Tuple[
         local_dominance = 40.0
         second_area = 5.0
         separation_ratio = 0.8
-        max_fwhm_second = 0.18
+        max_fwhm_second = 0.25
         min_compactness = 0.0
-        min_prominence_sigma = 0.0
+        min_prominence_sigma = 1.0
 
     # Don't create AnalysisOptions here anymore since it depends on the model choice
     # Create a placeholder with default values that will be overridden in analysis
@@ -599,9 +599,9 @@ def _render_sidebar() -> Tuple[
             "local_dominance": 40.0,
             "second_area": 5.0,
             "separation_ratio": 0.8,
-            "max_fwhm_second": 0.18,
+            "max_fwhm_second": 0.25,
             "min_compactness": 0.0,
-            "min_prominence_sigma": 0.0,
+            "min_prominence_sigma": 1.0,
         },
         "High (sensitive)": {
             "residual_prominence": 2.0,
@@ -611,9 +611,9 @@ def _render_sidebar() -> Tuple[
             "local_dominance": 30.0,
             "second_area": 3.0,
             "separation_ratio": 0.5,
-            "max_fwhm_second": 0.22,
+            "max_fwhm_second": 0.30,
             "min_compactness": 0.0,
-            "min_prominence_sigma": 0.0,
+            "min_prominence_sigma": 0.5,
         },
     }
 
@@ -640,9 +640,9 @@ def _render_sidebar() -> Tuple[
         local_dominance = st.session_state.get("local_dominance", 40.0)
         second_area = st.session_state.get("second_area", 5.0)
         separation_ratio = st.session_state.get("separation_ratio", 0.8)
-        max_fwhm_second = st.session_state.get("max_fwhm_second", 0.18)
+        max_fwhm_second = st.session_state.get("max_fwhm_second", 0.25)
         min_compactness = st.session_state.get("min_compactness", 0.0)
-        min_prominence_sigma = st.session_state.get("min_prominence_sigma", 0.0)
+        min_prominence_sigma = st.session_state.get("min_prominence_sigma", 1.0)
 
     options = AnalysisOptions(
         model="gaussian",  # placeholder, will be overridden
@@ -660,9 +660,9 @@ def _render_sidebar() -> Tuple[
         second_peak_area_threshold=safe_float(second_area, 5.0) / 100.0,
         min_separation_fwhm_ratio=safe_float(separation_ratio, 0.8),
         # Second peak quality constraints
-        max_fwhm_second_peak_um=safe_float(max_fwhm_second, 0.18),
+        max_fwhm_second_peak_um=safe_float(max_fwhm_second, 0.25),
         min_compactness_second_peak=safe_float(min_compactness, 0.0),
-        min_prominence_second_peak_sigma=safe_float(min_prominence_sigma, 0.0),
+        min_prominence_second_peak_sigma=safe_float(min_prominence_sigma, 1.0),
     )
     return (
         options,
