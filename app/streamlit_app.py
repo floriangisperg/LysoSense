@@ -186,7 +186,7 @@ def _render_sidebar() -> Tuple[
 
             limit_size_range = st.checkbox(
                 "Limit particle-size range for fitting",
-                value=False,
+                value=True,
                 help="Restrict analysis to a selected particle-size window. Leave off to use the full uploaded CPS/DCS trace.",
                 key="limit_size_range",
             )
@@ -204,7 +204,7 @@ def _render_sidebar() -> Tuple[
             with range_col2:
                 size_max_um = st.number_input(
                     "Max size (µm)",
-                    value=3.0,
+                    value=1.2,
                     min_value=0.1,
                     max_value=50.0,
                     step=0.1,
@@ -548,9 +548,9 @@ def _render_sidebar() -> Tuple[
         baseline_method = "minimum"
         view_mode = "Combined"
         normalize_data = False
-        limit_size_range = False
+        limit_size_range = True
         size_min_um = 0.2
-        size_max_um = 3.0
+        size_max_um = 1.2
         # Gated 2-peak defaults
         use_gated = True
         sensitivity = "Medium (default)"
@@ -675,7 +675,7 @@ def _render_sidebar() -> Tuple[
         normalize_data,
         bool(limit_size_range),
         safe_float(size_min_um, 0.2) or 0.2,
-        safe_float(size_max_um, 3.0) or 3.0,
+        safe_float(size_max_um, 1.2) or 1.2,
         uploaded_files,
     )
 
