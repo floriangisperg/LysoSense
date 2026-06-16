@@ -1,0 +1,19 @@
+{
+  "typeCheckingMode": "standard",
+  "include": ["src", "app"],
+  "exclude": [
+    "**/site-packages",
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+    "src/lysosense.egg-info",
+    "notebooks",
+    "data",
+    "results",
+    "scripts",
+    "src/lysosense/facs"
+  ],
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.13"
+}

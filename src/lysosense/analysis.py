@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Tuple, Optional, TypedDict
+from typing import Callable, Dict, List, Literal, Tuple, Optional, TypedDict, cast
 
 import numpy as np
 import pandas as pd
@@ -163,7 +163,6 @@ def _find_residual_peak_candidate(
     total_signal_area = float(np.trapezoid(np.maximum(positive_residual, 0), x))
     residual_area = float(np.trapezoid(positive_residual, x))
     if total_signal_area > 0:
-        area_frac = residual_area / total_signal_area
         # Actually compare residual area to original signal (approximated by residual + fit)
         # For simplicity, use residual area relative to its own scale
         if residual_area < opts.residual_min_area_frac * total_signal_area * 10:  # heuristic scaling
@@ -441,8 +440,6 @@ def _derive_metrics(
     area_total = max(area_cells + area_ibs, 1e-12)
 
     model_ib = fitres.get("model_ib", opts.get_model_ib())
-    model_cell = fitres.get("model_cell", opts.get_model_cell())
-
     if fitres["kind"] == "two":
         n1 = _params_per_peak(model_ib)
         m1 = fitres["popt"][1]
@@ -915,96 +912,109 @@ def _bounds_for_one_peak(
     return (tuple(lo), tuple(hi))
 
 
-def _two_peak_model(opts: AnalysisOptions, model_ib: ModelType, model_cell: ModelType):
+def _two_peak_model(
+    opts: AnalysisOptions, model_ib: ModelType, model_cell: ModelType
+) -> Callable[..., np.ndarray]:
     """Create a two-peak model function with potentially different model types per peak."""
-    n1 = _params_per_peak(model_ib)
-    n2 = _params_per_peak(model_cell)
-
     # Build parameter names dynamically for the signature
     # We'll use *args and unpack manually to handle variable parameter counts
 
+    model_fn: Callable[..., np.ndarray]
+
     if model_ib == "lognormal" and model_cell == "lognormal":
-        def model(x, A1, m1, s1, A2, m2, s2):
+        def lognormal_lognormal_model(x, A1, m1, s1, A2, m2, s2):
             scale1 = _lognorm_scale_from_mode(m1, s1)
             scale2 = _lognorm_scale_from_mode(m2, s2)
             return (
                 A1 * lognorm.pdf(x, s1, scale=scale1)
                 + A2 * lognorm.pdf(x, s2, scale=scale2)
             )
+        model_fn = lognormal_lognormal_model
     elif model_ib == "splitgaussian" and model_cell == "splitgaussian":
-        def model(x, A1, m1, s_left1, s_right1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
+        def splitgaussian_splitgaussian_model(x, A1, m1, s_left1, s_right1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
             return (
                 _split_gaussian(x, A1, m1, s_left1, s_right1)
                 + _split_gaussian(x, A2, m2, s_left2, s_right2)
             )
+        model_fn = splitgaussian_splitgaussian_model
     elif model_ib == "gaussian" and model_cell == "gaussian":
-        def model(x, A1, m1, s1, A2, m2, s2):
+        def gaussian_gaussian_model(x, A1, m1, s1, A2, m2, s2):
             return (
                 A1 * norm.pdf(x, loc=m1, scale=s1)
                 + A2 * norm.pdf(x, loc=m2, scale=s2)
             )
+        model_fn = gaussian_gaussian_model
     elif model_ib == "lognormal" and model_cell == "gaussian":
-        def model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
+        def lognormal_gaussian_model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
             scale1 = _lognorm_scale_from_mode(m1, s1)
             return (
                 A1 * lognorm.pdf(x, s1, scale=scale1)
                 + A2 * norm.pdf(x, loc=m2, scale=s2)
             )
+        model_fn = lognormal_gaussian_model
     elif model_ib == "gaussian" and model_cell == "lognormal":
-        def model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
+        def gaussian_lognormal_model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
             scale2 = _lognorm_scale_from_mode(m2, s2)
             return (
                 A1 * norm.pdf(x, loc=m1, scale=s1)
                 + A2 * lognorm.pdf(x, s2, scale=scale2)
             )
+        model_fn = gaussian_lognormal_model
     elif model_ib == "splitgaussian" and model_cell == "gaussian":
-        def model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
+        def splitgaussian_gaussian_model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
             return (
                 _split_gaussian(x, A1, m1, s_left1, s_right1)
                 + A2 * norm.pdf(x, loc=m2, scale=s2)
             )
+        model_fn = splitgaussian_gaussian_model
     elif model_ib == "gaussian" and model_cell == "splitgaussian":
-        def model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
+        def gaussian_splitgaussian_model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
             return (
                 A1 * norm.pdf(x, loc=m1, scale=s1)
                 + _split_gaussian(x, A2, m2, s_left2, s_right2)
             )
+        model_fn = gaussian_splitgaussian_model
     elif model_ib == "splitgaussian" and model_cell == "lognormal":
-        def model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
+        def splitgaussian_lognormal_model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
             scale2 = _lognorm_scale_from_mode(m2, s2)
             return (
                 _split_gaussian(x, A1, m1, s_left1, s_right1)
                 + A2 * lognorm.pdf(x, s2, scale=scale2)
             )
+        model_fn = splitgaussian_lognormal_model
     elif model_ib == "lognormal" and model_cell == "splitgaussian":
-        def model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
+        def lognormal_splitgaussian_model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
             scale1 = _lognorm_scale_from_mode(m1, s1)
             return (
                 A1 * lognorm.pdf(x, s1, scale=scale1)
                 + _split_gaussian(x, A2, m2, s_left2, s_right2)
             )
+        model_fn = lognormal_splitgaussian_model
     else:
         raise ValueError(f"Unknown model combination: {model_ib}, {model_cell}")
 
-    return model
+    return model_fn
 
 
-def _one_peak_model(model_type: ModelType):
+def _one_peak_model(model_type: ModelType) -> Callable[..., np.ndarray]:
     if model_type == "lognormal":
 
-        def model(x, A1, m1, s1):
+        def lognormal_model(x, A1, m1, s1):
             scale = _lognorm_scale_from_mode(m1, s1)
             return A1 * lognorm.pdf(x, s1, scale=scale)
+        model_fn = cast(Callable[..., np.ndarray], lognormal_model)
     elif model_type == "splitgaussian":
 
-        def model(x, A1, m1, s_left1, s_right1):  # type: ignore[misc]
+        def splitgaussian_model(x, A1, m1, s_left1, s_right1):  # type: ignore[misc]
             return _split_gaussian(x, A1, m1, s_left1, s_right1)
+        model_fn = cast(Callable[..., np.ndarray], splitgaussian_model)
     else:
 
-        def model(x, A1, m1, s1):
+        def gaussian_model(x, A1, m1, s1):
             return A1 * norm.pdf(x, loc=m1, scale=s1)
+        model_fn = cast(Callable[..., np.ndarray], gaussian_model)
 
-    return model
+    return model_fn
 
 
 def _split_gaussian(

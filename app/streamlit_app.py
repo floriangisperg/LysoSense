@@ -36,7 +36,7 @@ from lysosense import (  # noqa: E402
 import numpy as np  # noqa: E402
 
 
-def safe_float(value: Any, default: float | None = 0.0) -> float | None:
+def safe_float(value: Any, default: float = 0.0) -> float:
     """Safely convert a value to float, returning default on error."""
     if value is None:
         return default
@@ -224,7 +224,6 @@ def _render_sidebar() -> Tuple[
             model = st.radio(
                 "Peak model",
                 model_options,
-                horizontal=True,
                 index=default_index,
                 key="model",
             )
@@ -242,21 +241,20 @@ def _render_sidebar() -> Tuple[
             if use_mixed_models and not compare_models:
                 st.markdown("**Model per peak:**")
                 single_model_options = ("gaussian", "lognormal", "splitgaussian")
-                model_ib = st.selectbox(
+                st.selectbox(
                     "IB peak model",
                     single_model_options,
                     index=single_model_options.index(model) if model in single_model_options else 0,
                     key="model_ib",
                 )
-                model_cell = st.selectbox(
+                st.selectbox(
                     "Cell peak model",
                     single_model_options,
                     index=single_model_options.index(model) if model in single_model_options else 0,
                     key="model_cell",
                 )
             else:
-                model_ib = None
-                model_cell = None
+                pass
 
             st.markdown("**Peak Parameters**")
             mu_ib = st.number_input(
@@ -570,7 +568,7 @@ def _render_sidebar() -> Tuple[
     # Create a placeholder with default values that will be overridden in analysis
     peak_width_cap = None
     if limit_peak_width and max_peak_width_value is not None:
-        peak_width_cap = safe_float(max_peak_width_value, None)
+        peak_width_cap = safe_float(max_peak_width_value)
         if peak_width_cap == 0.0:  # safe_float returns 0.0 on error by default
             peak_width_cap = None
 
@@ -681,7 +679,7 @@ def _render_sidebar() -> Tuple[
 
 
 def _analyze_uploads(
-    uploaded_files: Sequence[UploadedFile],
+    uploaded_files: Sequence[Any],
     options: AnalysisOptions,
     normalize_data: bool,
     limit_size_range: bool,
@@ -689,8 +687,8 @@ def _analyze_uploads(
     size_max_um: float,
 ) -> List[Tuple[str, AnalysisResult]]:
     results: List[Tuple[str, AnalysisResult]] = []
-    model = st.session_state.get("model", "autofit")
-    compare_models = model == "autofit"
+    selected_model: str = str(st.session_state.get("model", "autofit"))
+    compare_models = selected_model == "autofit"
     baseline_subtraction = st.session_state.get("baseline_subtraction", False)
     baseline_method = st.session_state.get("baseline_method", "minimum")
 
@@ -712,9 +710,9 @@ def _analyze_uploads(
 
             if compare_models:
                 # Autofit: try all model combinations and pick the best
-                model_types = ["gaussian", "lognormal", "splitgaussian"]
+                model_types: list[str] = ["gaussian", "lognormal", "splitgaussian"]
                 best_r2 = -float("inf")
-                best_result = None
+                best_result: AnalysisResult | None = None
 
                 for model_ib in model_types:
                     for model_cell in model_types:
@@ -758,7 +756,7 @@ def _analyze_uploads(
                 analysis = best_result
             else:
                 # Use selected model (but not "autofit" since that's handled above)
-                actual_model = "gaussian" if model == "autofit" else model
+                actual_model = "gaussian" if selected_model == "autofit" else selected_model
 
                 # Check if mixed models are enabled
                 use_mixed = st.session_state.get("use_mixed_models", False)
