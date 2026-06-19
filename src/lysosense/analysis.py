@@ -140,6 +140,7 @@ def _estimate_noise_from_residual(residual: np.ndarray) -> float:
 def _find_residual_peak_candidate(
     x: np.ndarray,
     residual: np.ndarray,
+    y: np.ndarray,
     main_peak_mu: float,
     opts: AnalysisOptions,
 ) -> Optional[Tuple[float, float]]:
@@ -159,14 +160,12 @@ def _find_residual_peak_candidate(
     # Estimate noise level
     noise_sigma = _estimate_noise_from_residual(residual)
 
-    # Check minimum residual area
-    total_signal_area = float(np.trapezoid(np.maximum(positive_residual, 0), x))
+    # Pre-fit gate: the unexplained positive-residual mass must reach at least
+    # residual_min_area_frac of the total signal mass to justify a second peak.
+    signal_area = float(np.trapezoid(np.maximum(y, 0.0), x))
     residual_area = float(np.trapezoid(positive_residual, x))
-    if total_signal_area > 0:
-        # Actually compare residual area to original signal (approximated by residual + fit)
-        # For simplicity, use residual area relative to its own scale
-        if residual_area < opts.residual_min_area_frac * total_signal_area * 10:  # heuristic scaling
-            pass  # Don't reject yet, check other criteria
+    if signal_area > 0.0 and residual_area < opts.residual_min_area_frac * signal_area:
+        return None
 
     # Find peaks in positive residual with minimum prominence
     min_prominence = noise_sigma * opts.residual_prominence_sigma
@@ -185,22 +184,21 @@ def _find_residual_peak_candidate(
     if len(peak_indices) == 0:
         return None
 
-    # Filter by distance from main peak
+    prominences = properties.get("prominences", positive_residual[peak_indices])
+
+    # Filter by distance from main peak; track (position, height, prominence).
     valid_candidates = []
-    for idx in peak_indices:
-        peak_x = x[idx]
-        distance_from_main = abs(peak_x - main_peak_mu)
-        if distance_from_main >= opts.residual_min_distance_um:
-            peak_height = positive_residual[idx]
-            # Get prominence from properties
-            prominences = properties.get('prominences', [peak_height])
-            prominence = prominences[list(peak_indices).index(idx)] if idx in peak_indices else peak_height
-            valid_candidates.append((peak_x, peak_height, prominence, distance_from_main))
+    for i, idx in enumerate(peak_indices):
+        peak_x = float(x[idx])
+        if abs(peak_x - main_peak_mu) >= opts.residual_min_distance_um:
+            valid_candidates.append(
+                (peak_x, float(positive_residual[idx]), float(prominences[i]))
+            )
 
     if not valid_candidates:
         return None
 
-    # Return the most prominent candidate
+    # Return the most prominent candidate.
     valid_candidates.sort(key=lambda c: c[2], reverse=True)
     best = valid_candidates[0]
     return (best[0], best[1])
@@ -281,12 +279,12 @@ def _calculate_fwhm_from_params(
 ) -> float:
     """Calculate FWHM for a peak given its model type and parameters."""
     if model_type == "lognormal":
-        # For lognormal, FWHM is approximately 2.355 * sigma (approximation)
-        # More accurate: use the shape parameter
-        shape = params[2]
-        mode = params[1]
-        # Approximate FWHM for lognormal
-        return float(2.355 * shape * mode)
+        # Exact lognormal FWHM = 2 * mode * sinh(shape * sqrt(2 * ln 2)).
+        # This is the inverse of _shape_cap_from_fwhm, so the FWHM used for
+        # fit-time bounds and for post-fit gate checks stays consistent.
+        shape = float(params[2])
+        mode = float(params[1])
+        return float(2.0 * mode * np.sinh(shape * np.sqrt(2.0 * np.log(2.0))))
     elif model_type == "splitgaussian":
         # Use average of left and right sigma
         sigma_avg = 0.5 * (params[2] + params[3])
@@ -440,17 +438,22 @@ def _derive_metrics(
     area_total = max(area_cells + area_ibs, 1e-12)
 
     model_ib = fitres.get("model_ib", opts.get_model_ib())
+    model_cell = fitres.get("model_cell", opts.get_model_cell())
     if fitres["kind"] == "two":
         n1 = _params_per_peak(model_ib)
-        m1 = fitres["popt"][1]
-        m2 = fitres["popt"][n1 + 1]
+        mean1 = _mean_from_params(model_ib, fitres["popt"][:n1])
+        mean2 = _mean_from_params(model_cell, fitres["popt"][n1:])
+        # Decide which component is intact cells by peak position (mode); the
+        # reported mean is then taken from the chosen component's parameters.
+        m1 = float(fitres["popt"][1])
+        m2 = float(fitres["popt"][n1 + 1])
         cell_first = fitres.get("cell_first")
         if cell_first is None:
             cell_first = _cell_component_first(m1, m2, opts)
-        m_cell = float(m1 if cell_first else m2)
-        m_ib = float(m2 if cell_first else m1)
+        m_cell = float(mean1 if cell_first else mean2)
+        m_ib = float(mean2 if cell_first else mean1)
     else:
-        m_ib = float(fitres["popt"][1])
+        m_ib = float(_mean_from_params(model_ib, fitres["popt"]))
         m_cell = None
 
     intact_fraction = float(area_cells / area_total)
@@ -512,7 +515,7 @@ def _fit_curve(
                                      p1, popt_1peak, pcov_1peak, bic_1peak)
 
     # --- Step 3: Pre-fit gate - check residual for second peak evidence ---
-    residual_candidate = _find_residual_peak_candidate(x, residual, main_peak_mu, opts)
+    residual_candidate = _find_residual_peak_candidate(x, residual, y, main_peak_mu, opts)
 
     if residual_candidate is None:
         # No evidence of second peak in residual - use 1-peak model
@@ -1047,6 +1050,26 @@ def _get_mu_from_params(model_type: ModelType, params: np.ndarray) -> float:
     return float(params[1])
 
 
+def _mean_from_params(model_type: ModelType, params: np.ndarray) -> float:
+    """Arithmetic mean of a fitted peak.
+
+    For a symmetric gaussian this equals the mode (params[1]); for the
+    asymmetric lognormal and split-gaussian models it differs from the mode,
+    so the reported ``mean_*_um`` metric must be computed per model rather than
+    read straight from params[1].
+    """
+    if model_type == "lognormal":
+        mode = float(params[1])
+        shape = float(params[2])
+        return float(mode * np.exp(1.5 * shape * shape))
+    if model_type == "splitgaussian":
+        mu = float(params[1])
+        s_left = float(params[2])
+        s_right = float(params[3])
+        return float(mu + np.sqrt(2.0 / np.pi) * (s_right - s_left))
+    return float(params[1])  # gaussian: mean == mode
+
+
 def _component_arrays(
     x: np.ndarray, fitres: _FitResult, opts: AnalysisOptions
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1066,6 +1089,12 @@ def _component_arrays(
         else:
             cells, ibs = comp2, comp1
     else:
+        # NOTE (algorithm assumption): a single-peak result is attributed
+        # entirely to inclusion bodies, so intact_fraction = 0 and lysis = 100%.
+        # This is deliberate for homogenization samples (IB expected present),
+        # but a cell-dominant sample is only reported correctly if its peak
+        # triggers the 2-peak path. Validate against known-composition controls
+        # before changing this baseline assumption.
         comp1 = _single_component(x, fitres["popt"], model_ib)
         cells = np.zeros_like(comp1)
         ibs = comp1
