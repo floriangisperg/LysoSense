@@ -16,20 +16,21 @@ LysoSense provides a reproducible workflow for analyzing differential centrifuga
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
-python -m pip install -e .
-set PYTHONPATH=src
+python -m pip install -r requirements.txt
 streamlit run app\streamlit_app.py
 ```
+The app entry point adds `src` to `sys.path` at import time, so no editable install or `PYTHONPATH` setup is required.
 
 ### Project Layout
 ```
-+- app/               # Streamlit entry point (uses Plotly for overlays)
-+- data/              # Local CPS exports (ignored; keep private)
-+- notebooks/         # Exploratory notebooks (e.g., cps_analyzer.ipynb)
-+- src/lysosense/     # Installable package: io.py (parsing), analysis.py (fitting)
-+- pyproject.toml     # Dependency + metadata definition
-+- AGENTS.md          # Contributor notes
-+- README.md          # You are here
++- app/                     # Streamlit entry point (uses Plotly for overlays)
++- data/                    # Local CPS exports (ignored; keep private)
++- notebooks/               # Exploratory notebooks (e.g., cps_analyzer.ipynb)
++- src/lysosense/           # Package: io.py (parsing), analysis.py (fitting)
++- tests/                   # pytest suite
++- .github/workflows/       # CI (ruff, mypy, pyright on Python 3.13)
++- requirements.txt         # Pinned runtime dependencies
++- README.md                # You are here
 ```
 
 
