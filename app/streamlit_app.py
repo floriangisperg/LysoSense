@@ -30,10 +30,14 @@ except Exception:  # pragma: no cover
 from lysosense import (  # noqa: E402
     AnalysisOptions,
     AnalysisResult,
+    NormalizationSkipped,
     analyze_measurement,
+    calculate_r_squared,
+    clip_measurement_range,
+    normalize_measurement,
     parse_dat_bytes,
+    subtract_baseline,
 )
-import numpy as np  # noqa: E402
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -696,17 +700,20 @@ def _analyze_uploads(
         try:
             measurement = parse_dat_bytes(file.getvalue(), source_name=file.name)
             if limit_size_range and size_min_um < size_max_um:
-                measurement = _clip_measurement_range(
+                measurement = clip_measurement_range(
                     measurement, size_min_um, size_max_um
                 )
 
             # Apply baseline subtraction if requested
             if baseline_subtraction:
-                measurement = _subtract_baseline(measurement, baseline_method)
+                measurement = subtract_baseline(measurement, baseline_method)
 
             # Apply normalization if requested
             if normalize_data:
-                measurement = _normalize_data(measurement)
+                try:
+                    measurement = normalize_measurement(measurement)
+                except NormalizationSkipped as exc:
+                    st.warning(str(exc))
 
             if compare_models:
                 # Autofit: try all model combinations and pick the best
@@ -743,7 +750,7 @@ def _analyze_uploads(
                                     min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
                                 ),
                             )
-                            r2 = _calculate_r_squared(result)
+                            r2 = calculate_r_squared(result)
                             if r2 > best_r2:
                                 best_r2 = r2
                                 best_result = result
@@ -815,152 +822,6 @@ def _analyze_uploads(
         except Exception as exc:
             st.error(f"{file.name}: {exc}")
     return results
-
-
-def _calculate_r_squared(result: AnalysisResult) -> float:
-    """Calculate R² for the fit."""
-    observed = result.observed
-    y_actual = observed["mass_signal_ug"].to_numpy()
-    y_predicted = observed["fit_signal_ug"].to_numpy()
-
-    ss_res = float(np.sum((y_actual - y_predicted) ** 2))
-    ss_tot = float(np.sum((y_actual - float(np.mean(y_actual))) ** 2))
-
-    if ss_tot == 0:
-        return 0.0
-
-    r_squared = 1 - (ss_res / ss_tot)
-    return max(0.0, r_squared)  # Ensure non-negative
-
-
-def _subtract_baseline(measurement, method: str = "minimum"):
-    """Subtract baseline from measurement data."""
-    from lysosense.io import Measurement
-
-    if measurement.data.empty:
-        return measurement
-
-    df = measurement.data.copy()
-    x = df["particle_size_um"].values
-    y = df["mass_signal_ug"].values
-
-    if method == "minimum":
-        baseline_value = np.min(y)
-        y_corrected = y - baseline_value
-
-    elif method == "percentile":
-        baseline_value = np.percentile(y, 1)
-        y_corrected = y - baseline_value
-
-    elif method == "linear":
-        # Fit line through first 10% and last 10% of points
-        n_points = len(x)
-        n_edge = max(10, int(0.1 * n_points))
-
-        # Get edge points for baseline fitting
-        x_edge = np.concatenate([x[:n_edge], x[-n_edge:]])
-        y_edge = np.concatenate([y[:n_edge], y[-n_edge:]])
-
-        # Fit linear baseline
-        coeffs = np.polyfit(x_edge, y_edge, 1)
-        baseline = np.polyval(coeffs, x)
-        y_corrected = y - baseline
-
-    else:
-        raise ValueError(f"Unknown baseline method: {method}")
-
-    # Ensure non-negative values
-    y_corrected = np.maximum(y_corrected, 0)
-
-    # Create new measurement with baseline-corrected data
-    corrected_data = df.copy()
-    corrected_data["mass_signal_ug"] = y_corrected
-
-    # Store baseline info in metadata
-    corrected_metadata = measurement.metadata.copy()
-    corrected_metadata["baseline_subtracted"] = True
-    corrected_metadata["baseline_method"] = method
-
-    return Measurement(
-        name=f"{measurement.name}_baseline_corrected",
-        metadata=corrected_metadata,
-        data=corrected_data,
-        source=measurement.source,
-        notes=measurement.notes + [f"Baseline corrected using {method} method"],
-    )
-
-
-def _normalize_data(measurement):
-    """Normalize measurement data to maximum intensity."""
-    from lysosense.io import Measurement
-
-    if measurement.data.empty:
-        return measurement
-
-    df = measurement.data.copy()
-    y = df["mass_signal_ug"].values
-
-    # Use maximum signal value for normalization
-    normalization_factor = np.max(y)
-
-    # Avoid division by zero
-    if normalization_factor <= 0:
-        st.warning(
-            f"Normalization factor is {normalization_factor:.2e}, skipping normalization for {measurement.name}"
-        )
-        return measurement
-
-    # Apply normalization
-    y_normalized = y / normalization_factor
-
-    # Create new measurement with normalized data
-    normalized_data = df.copy()
-    normalized_data["mass_signal_ug"] = y_normalized
-
-    # Store normalization info in metadata
-    normalized_metadata = measurement.metadata.copy()
-    normalized_metadata["normalized"] = True
-    normalized_metadata["normalization_method"] = "max_intensity"
-    normalized_metadata["normalization_factor"] = normalization_factor
-
-    return Measurement(
-        name=f"{measurement.name}_normalized",
-        metadata=normalized_metadata,
-        data=normalized_data,
-        source=measurement.source,
-        notes=measurement.notes
-        + [f"Normalized to max intensity (factor: {normalization_factor:.2e})"],
-    )
-
-
-def _clip_measurement_range(measurement, min_size: float, max_size: float):
-    """Restrict the measurement to a particle-size window."""
-    from lysosense.io import Measurement
-
-    if measurement.data.empty:
-        return measurement
-
-    df = measurement.data.copy()
-    mask = df["particle_size_um"].between(min_size, max_size)
-
-    if not mask.any():
-        # If no points fall in range, keep the original to avoid empty fits.
-        return measurement
-
-    clipped_data = df.loc[mask].reset_index(drop=True)
-
-    clipped_metadata = measurement.metadata.copy()
-    clipped_metadata["clip_min_um"] = min_size
-    clipped_metadata["clip_max_um"] = max_size
-
-    return Measurement(
-        name=measurement.name,
-        metadata=clipped_metadata,
-        data=clipped_data,
-        source=measurement.source,
-        notes=measurement.notes
-        + [f"Clipped to {min_size:.2f}-{max_size:.2f} µm range"],
-    )
 
 
 def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
@@ -1244,7 +1105,7 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
         row.update(analysis.metrics)  # type: ignore[arg-type]
 
         # Add fit quality metrics
-        r_squared = _calculate_r_squared(analysis)
+        r_squared = calculate_r_squared(analysis)
         row["r_squared"] = r_squared
         row["fit_quality"] = _get_fit_quality_label(r_squared)
 
