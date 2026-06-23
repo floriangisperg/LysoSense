@@ -80,6 +80,9 @@ def main() -> None:
     if not uploaded_files:
         st.info("📁 Upload .dat files in the sidebar to begin the analysis.")
         return
+    if limit_size_range and size_min_um >= size_max_um:
+        st.error("The particle-size range is invalid: min size must be smaller than max size.")
+        return
 
     results = _analyze_uploads(
         uploaded_files,
@@ -106,12 +109,15 @@ def main() -> None:
         st.warning("Select at least one measurement to render plots and metrics.")
         return
 
+    _render_run_summary(active_results)
+
     # Create tab interface
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "📊 Overview",
             "🔍 Individual Samples",
             "📈 Results Table",
+            "Fit Diagnostics",
             "ℹ️ Detailed Information",
         ]
     )
@@ -128,6 +134,9 @@ def main() -> None:
         summary_df = _render_results_tab(active_results)
 
     with tab4:
+        _render_diagnostics_tab(active_results)
+
+    with tab5:
         _render_details_tab(active_results)
 
     # Download buttons stay at bottom
@@ -218,7 +227,13 @@ def _render_sidebar() -> Tuple[
 
         # Model settings section
         with st.sidebar.expander("⚙️ Model Settings", expanded=True):
-            model_options = ("gaussian", "lognormal", "splitgaussian", "autofit")
+            model_options = (
+                "gaussian",
+                "lognormal",
+                "splitgaussian",
+                "gennormal",
+                "autofit",
+            )
             default_model = st.session_state.get("model", "autofit")
             default_index = (
                 model_options.index(default_model)
@@ -244,7 +259,12 @@ def _render_sidebar() -> Tuple[
 
             if use_mixed_models and not compare_models:
                 st.markdown("**Model per peak:**")
-                single_model_options = ("gaussian", "lognormal", "splitgaussian")
+                single_model_options = (
+                    "gaussian",
+                    "lognormal",
+                    "splitgaussian",
+                    "gennormal",
+                )
                 st.selectbox(
                     "IB peak model",
                     single_model_options,
@@ -317,6 +337,16 @@ def _render_sidebar() -> Tuple[
             else:
                 max_peak_width_value = None
 
+            fit_weight_power = st.slider(
+                "Peak-top weighting",
+                min_value=0.0,
+                max_value=0.5,
+                value=0.2,
+                step=0.05,
+                help="Give higher-signal points more influence during fitting. 0 = ordinary least squares.",
+                key="fit_weight_power",
+            )
+
             # Gated 2-peak decision settings
             st.markdown("**2-Peak Detection**")
             use_gated = st.checkbox(
@@ -347,7 +377,7 @@ def _render_sidebar() -> Tuple[
                         "residual_area": 5.0,
                         "bic_threshold": -10.0,
                         "local_dominance": 40.0,
-                        "second_area": 5.0,
+                        "second_area": 3.0,
                         "separation_ratio": 0.8,
                         "max_fwhm_second": 0.25,
                         "min_compactness": 0.0,
@@ -400,7 +430,7 @@ def _render_sidebar() -> Tuple[
                         "Min residual area (%)",
                         min_value=1.0,
                         max_value=10.0,
-                        value=5.0,
+                        value=3.0,
                         step=0.5,
                         help="Minimum residual area as fraction of total signal",
                         key="residual_area",
@@ -429,7 +459,7 @@ def _render_sidebar() -> Tuple[
                         "Min 2nd peak area (%)",
                         min_value=1.0,
                         max_value=10.0,
-                        value=5.0,
+                        value=3.0,
                         step=0.5,
                         help="Minimum area fraction for second peak",
                         key="second_area",
@@ -480,7 +510,7 @@ def _render_sidebar() -> Tuple[
                 residual_area = 5.0
                 bic_threshold = -10.0
                 local_dominance = 40.0
-                second_area = 5.0
+                second_area = 3.0
                 separation_ratio = 0.8
                 max_fwhm_second = 0.25
                 min_compactness = 0.0
@@ -519,6 +549,7 @@ def _render_sidebar() -> Tuple[
                                 "second_peak",
                                 "limit_peak_width",
                                 "max_peak_width",
+                                "fit_weight_power",
                                 "show_fit",
                                 "show_components",
                                 "baseline_subtraction",
@@ -544,6 +575,7 @@ def _render_sidebar() -> Tuple[
         second_peak_percent = 0.02
         limit_peak_width = True
         max_peak_width_value = 0.3
+        fit_weight_power = 0.2
         show_fit = True
         show_components = True
         baseline_subtraction = False
@@ -562,7 +594,7 @@ def _render_sidebar() -> Tuple[
         residual_area = 5.0
         bic_threshold = -10.0
         local_dominance = 40.0
-        second_area = 5.0
+        second_area = 3.0
         separation_ratio = 0.8
         max_fwhm_second = 0.25
         min_compactness = 0.0
@@ -599,7 +631,7 @@ def _render_sidebar() -> Tuple[
             "residual_area": 5.0,
             "bic_threshold": -10.0,
             "local_dominance": 40.0,
-            "second_area": 5.0,
+            "second_area": 3.0,
             "separation_ratio": 0.8,
             "max_fwhm_second": 0.25,
             "min_compactness": 0.0,
@@ -640,7 +672,7 @@ def _render_sidebar() -> Tuple[
         residual_area = st.session_state.get("residual_area", 5.0)
         bic_threshold = st.session_state.get("bic_threshold", -10.0)
         local_dominance = st.session_state.get("local_dominance", 40.0)
-        second_area = st.session_state.get("second_area", 5.0)
+        second_area = st.session_state.get("second_area", 3.0)
         separation_ratio = st.session_state.get("separation_ratio", 0.8)
         max_fwhm_second = st.session_state.get("max_fwhm_second", 0.25)
         min_compactness = st.session_state.get("min_compactness", 0.0)
@@ -653,13 +685,14 @@ def _render_sidebar() -> Tuple[
         allow_shift_fraction=safe_float(allow_shift, 20.0) / 100.0,
         second_peak_min_frac=safe_float(second_peak_percent, 0.02),
         max_peak_fwhm_um=peak_width_cap,
+        fit_weight_power=safe_float(fit_weight_power, 0.2),
         use_gated_two_peak=bool(use_gated),
         residual_prominence_sigma=safe_float(residual_prominence, 3.0),
         residual_min_distance_um=safe_float(residual_distance, 0.15),
         residual_min_area_frac=safe_float(residual_area, 5.0) / 100.0,
         bic_improvement_threshold=safe_float(bic_threshold, -10.0),
         local_dominance_threshold=safe_float(local_dominance, 40.0) / 100.0,
-        second_peak_area_threshold=safe_float(second_area, 5.0) / 100.0,
+        second_peak_area_threshold=safe_float(second_area, 3.0) / 100.0,
         min_separation_fwhm_ratio=safe_float(separation_ratio, 0.8),
         # Second peak quality constraints
         max_fwhm_second_peak_um=safe_float(max_fwhm_second, 0.25),
@@ -717,9 +750,16 @@ def _analyze_uploads(
 
             if compare_models:
                 # Autofit: try all model combinations and pick the best
-                model_types: list[str] = ["gaussian", "lognormal", "splitgaussian"]
+                model_types: list[str] = [
+                    "gaussian",
+                    "lognormal",
+                    "splitgaussian",
+                    "gennormal",
+                ]
                 best_r2 = -float("inf")
+                best_residual_score = float("inf")
                 best_result: AnalysisResult | None = None
+                r2_tie_tolerance = 5e-4
 
                 for model_ib in model_types:
                     for model_cell in model_types:
@@ -735,6 +775,8 @@ def _analyze_uploads(
                                     allow_shift_fraction=options.allow_shift_fraction,
                                     second_peak_min_frac=options.second_peak_min_frac,
                                     max_peak_fwhm_um=options.max_peak_fwhm_um,
+                                    fit_weight_power=options.fit_weight_power,
+                                    fit_weight_offset=options.fit_weight_offset,
                                     # Gated 2-peak parameters
                                     use_gated_two_peak=options.use_gated_two_peak,
                                     residual_prominence_sigma=options.residual_prominence_sigma,
@@ -750,9 +792,25 @@ def _analyze_uploads(
                                     min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
                                 ),
                             )
+                            if result.fit_kind == "two":
+                                intact_fraction = safe_float(
+                                    result.metrics.get("intact_fraction"), 0.0
+                                )
+                                if model_ib == "gennormal":
+                                    continue
+                                if (
+                                    model_cell == "gennormal"
+                                    and intact_fraction < 0.15
+                                ):
+                                    continue
                             r2 = calculate_r_squared(result)
-                            if r2 > best_r2:
+                            residual_score = _fit_residual_score(result)
+                            if r2 > best_r2 + r2_tie_tolerance or (
+                                abs(r2 - best_r2) <= r2_tie_tolerance
+                                and residual_score < best_residual_score
+                            ):
                                 best_r2 = r2
+                                best_residual_score = residual_score
                                 best_result = result
                         except Exception:
                             # Skip failed fits
@@ -780,6 +838,8 @@ def _analyze_uploads(
                         allow_shift_fraction=options.allow_shift_fraction,
                         second_peak_min_frac=options.second_peak_min_frac,
                         max_peak_fwhm_um=options.max_peak_fwhm_um,
+                        fit_weight_power=options.fit_weight_power,
+                        fit_weight_offset=options.fit_weight_offset,
                         # Gated 2-peak parameters
                         use_gated_two_peak=options.use_gated_two_peak,
                         residual_prominence_sigma=options.residual_prominence_sigma,
@@ -802,6 +862,8 @@ def _analyze_uploads(
                         allow_shift_fraction=options.allow_shift_fraction,
                         second_peak_min_frac=options.second_peak_min_frac,
                         max_peak_fwhm_um=options.max_peak_fwhm_um,
+                        fit_weight_power=options.fit_weight_power,
+                        fit_weight_offset=options.fit_weight_offset,
                         # Gated 2-peak parameters
                         use_gated_two_peak=options.use_gated_two_peak,
                         residual_prominence_sigma=options.residual_prominence_sigma,
@@ -822,6 +884,119 @@ def _analyze_uploads(
         except Exception as exc:
             st.error(f"{file.name}: {exc}")
     return results
+
+
+def _fit_residual_score(result: AnalysisResult) -> float:
+    """Residual tie-break score for near-identical autofit R² values."""
+    observed = result.observed
+    residual = observed["mass_signal_ug"] - observed["fit_signal_ug"]
+    peak_height = max(safe_float(observed["mass_signal_ug"].max()), 1e-12)
+    max_abs = safe_float(residual.abs().max())
+    mean_abs = safe_float(residual.abs().mean())
+    return (max_abs / peak_height) + 0.25 * (mean_abs / peak_height)
+
+
+def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
+    """Show a compact status band for the selected analysis run."""
+    if not entries:
+        return
+
+    r_squared_values = [calculate_r_squared(analysis) for _, analysis in entries]
+    lysis_values = [
+        safe_float(analysis.metrics.get("lysis_efficiency"), 0.0)
+        for _, analysis in entries
+    ]
+    two_peak_count = sum(1 for _, analysis in entries if analysis.fit_kind == "two")
+    low_quality_count = sum(1 for value in r_squared_values if value < 0.90)
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Selected traces", len(entries))
+    with col2:
+        st.metric("Two-peak fits", f"{two_peak_count}/{len(entries)}")
+    with col3:
+        mean_lysis = sum(lysis_values) / max(len(lysis_values), 1)
+        st.metric("Mean lysis efficiency", f"{mean_lysis:.1%}")
+    with col4:
+        mean_r2 = sum(r_squared_values) / max(len(r_squared_values), 1)
+        st.metric("Mean R²", f"{mean_r2:.4f}")
+
+    if low_quality_count:
+        st.warning(
+            f"{low_quality_count} selected trace(s) have R² below 0.90. "
+            "Review the Fit Diagnostics tab before interpreting those results."
+        )
+
+
+def _build_residual_stats(
+    entries: Sequence[Tuple[str, AnalysisResult]],
+) -> pd.DataFrame:
+    """Build per-sample fit residual diagnostics."""
+    records: List[Dict[str, float | str]] = []
+    for label, analysis in entries:
+        observed = analysis.observed
+        residual = observed["mass_signal_ug"] - observed["fit_signal_ug"]
+        abs_residual = residual.abs()
+        signal_range = (
+            observed["mass_signal_ug"].max() - observed["mass_signal_ug"].min()
+        )
+        rmse = safe_float((residual.pow(2).mean()) ** 0.5)
+        max_abs = safe_float(abs_residual.max())
+        normalized_rmse = rmse / max(safe_float(signal_range), 1e-12)
+
+        records.append(
+            {
+                "measurement": label,
+                "fit_kind": analysis.fit_kind,
+                "model": str(analysis.metrics.get("model", "")),
+                "r_squared": calculate_r_squared(analysis),
+                "rmse": rmse,
+                "normalized_rmse": normalized_rmse,
+                "max_abs_residual": max_abs,
+                "mean_residual": safe_float(residual.mean()),
+            }
+        )
+
+    return pd.DataFrame(records)
+
+
+def _render_residual_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
+    fig = go.Figure()
+    colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
+
+    for i, (label, analysis) in enumerate(entries):
+        observed = analysis.observed
+        residual = observed["mass_signal_ug"] - observed["fit_signal_ug"]
+        fig.add_trace(
+            go.Scatter(
+                x=observed["particle_size_um"],
+                y=residual,
+                name=label.replace(".dat", ""),
+                mode="lines",
+                line=dict(color=colors[i % len(colors)], width=1.8),
+            )
+        )
+
+    fig.add_hline(y=0, line_dash="dash", line_color="#666666", line_width=1)
+    fig.update_layout(
+        xaxis_title="Particle size (µm)",
+        yaxis_title="Residual (observed - fit)",
+        template="plotly_white",
+        margin=dict(l=40, r=10, t=20, b=40),
+        legend_title="Sample",
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
@@ -1480,6 +1655,25 @@ def _render_results_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.Dat
 
     summary_df = _render_metrics(entries)
     return summary_df
+
+
+def _render_diagnostics_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
+    """Render residual diagnostics for fitted traces."""
+    st.markdown("### Fit Diagnostics")
+    st.markdown("Residuals and error metrics for the selected samples.")
+
+    _render_residual_plot(entries)
+
+    diagnostics = _build_residual_stats(entries)
+    if diagnostics.empty:
+        st.info("No diagnostic data available.")
+        return
+
+    st.dataframe(
+        diagnostics,
+        hide_index=True,
+        width="stretch",
+    )
 
 
 def _render_details_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:

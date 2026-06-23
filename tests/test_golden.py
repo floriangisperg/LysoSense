@@ -42,10 +42,10 @@ GOLDEN: dict[str, dict[str, object]] = {
         "mean_cell_µm": None,
     },
     "G7_CMC2_Resuspended_Biomass_H11738.dat": {
-        "fit_kind": "two",
-        "intact_fraction": 0.9922659703053512,
-        "lysis_efficiency": 0.0077340296946487586,
-        "mean_ib_µm": 0.5737646610006711,
+        "fit_kind": "one",
+        "intact_fraction": 1.0,
+        "lysis_efficiency": 0.0,
+        "mean_ib_µm": None,
         "mean_cell_µm": 0.8953214269999998,
     },
 }
@@ -87,9 +87,13 @@ def test_golden_demo_metrics(filename: str) -> None:
     else:
         assert metrics[CELL_KEY] is not None
         assert abs(metrics[CELL_KEY] - expected_cell) < 0.05
-    # IB mean is always present for these files.
-    assert metrics[IB_KEY] is not None
-    assert abs(metrics[IB_KEY] - float(expected[IB_KEY])) < 0.05
+    # IB mean: None must stay None; otherwise stay within 0.05 um.
+    expected_ib = expected[IB_KEY]
+    if expected_ib is None:
+        assert metrics[IB_KEY] is None
+    else:
+        assert metrics[IB_KEY] is not None
+        assert abs(metrics[IB_KEY] - float(expected_ib)) < 0.05
 
 
 def test_golden_areas_are_consistent() -> None:

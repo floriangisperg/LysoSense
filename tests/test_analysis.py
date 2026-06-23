@@ -13,10 +13,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import lysosense.analysis as analysis_module
 from lysosense import (
     AnalysisOptions,
     Measurement,
     analyze_measurement,
+    calculate_r_squared,
 )
 
 CELL_MEAN_KEY = "mean_cell_µm"
@@ -25,6 +27,14 @@ IB_MEAN_KEY = "mean_ib_µm"
 
 def _gaussian(x: np.ndarray, amplitude: float, mu: float, sigma: float) -> np.ndarray:
     return amplitude * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+
+def _split_gaussian(
+    x: np.ndarray, amplitude: float, mu: float, sigma_left: float, sigma_right: float
+) -> np.ndarray:
+    left = amplitude * np.exp(-0.5 * ((x - mu) / sigma_left) ** 2)
+    right = amplitude * np.exp(-0.5 * ((x - mu) / sigma_right) ** 2)
+    return np.where(x < mu, left, right)
 
 
 def _make_measurement(x: np.ndarray, y: np.ndarray, name: str = "synth") -> Measurement:
@@ -150,6 +160,35 @@ def test_two_peak_is_deterministic_across_runs():
         assert first[key] == second[key]
 
 
+def test_residual_area_gate_can_trigger_two_peak_attempt(monkeypatch: pytest.MonkeyPatch):
+    """Broad residual mass can trigger 2-peak fitting without a sharp residual peak."""
+
+    x = np.linspace(0.2, 1.2, 700)
+    y = _split_gaussian(x, 24.0, 0.51, 0.08, 0.07)
+    y += _split_gaussian(x, 1.4, 0.85, 0.075, 0.065)
+    measurement = _make_measurement(x, y, "shoulder")
+
+    monkeypatch.setattr(
+        analysis_module,
+        "_find_residual_peak_candidate",
+        lambda *args, **kwargs: None,
+    )
+
+    result = analyze_measurement(
+        measurement,
+        AnalysisOptions(
+            model="gaussian",
+            model_ib="splitgaussian",
+            model_cell="splitgaussian",
+            residual_min_area_frac=0.01,
+        ),
+    )
+
+    assert result.fit_kind == "two"
+    assert result.metrics[CELL_MEAN_KEY] is not None
+    assert abs(result.metrics[CELL_MEAN_KEY] - 0.85) < 0.04
+
+
 # ---------------------------------------------------------------------------
 # Single-peak fallback
 # ---------------------------------------------------------------------------
@@ -171,6 +210,66 @@ def test_single_peak_triggers_one_peak_fallback():
     # IB peak centre recovered; cell mean is absent.
     assert metrics[CELL_MEAN_KEY] is None
     assert abs(metrics[IB_MEAN_KEY] - 0.48) < 0.02
+
+
+def test_cell_dominant_single_peak_is_reported_as_cells():
+    """A lone peak near the cell target is not forced into the IB component."""
+
+    x = np.linspace(0.3, 1.3, 400)
+    y = _gaussian(x, 4.0, 0.88, 0.07)
+    result = analyze_measurement(_make_measurement(x, y, "cells"))
+
+    assert result.fit_kind == "one"
+    metrics = result.metrics
+    assert metrics["area_inclusion_bodies"] == 0.0
+    assert metrics["intact_fraction"] == 1.0
+    assert metrics["lysis_efficiency"] == 0.0
+    assert metrics[IB_MEAN_KEY] is None
+    assert metrics[CELL_MEAN_KEY] is not None
+    assert abs(metrics[CELL_MEAN_KEY] - 0.88) < 0.02
+
+
+def test_tiny_secondary_component_is_rejected():
+    """A trace with a dominant cell peak and tiny low-size bump stays one-peak."""
+
+    x = np.linspace(0.2, 1.2, 500)
+    y = _gaussian(x, 55.0, 0.90, 0.07)
+    y += _gaussian(x, 1.0, 0.52, 0.03)
+    result = analyze_measurement(_make_measurement(x, y, "tiny-bump"))
+
+    assert result.fit_kind == "one"
+    assert result.metrics["area_inclusion_bodies"] == 0.0
+    assert result.metrics["intact_fraction"] == 1.0
+
+
+def test_generalized_normal_fits_rounded_cell_peak_shape():
+    """Generalized-normal peaks can reduce Gaussian center overshoot."""
+
+    x = np.linspace(0.3, 1.2, 500)
+    y = 9.8 * np.exp(-np.abs((x - 0.90) / 0.105) ** 2.4)
+    measurement = _make_measurement(x, y, "rounded-cells")
+
+    gaussian = analyze_measurement(
+        measurement,
+        AnalysisOptions(model="gaussian", model_ib="gaussian", model_cell="gaussian"),
+    )
+    generalized = analyze_measurement(
+        measurement,
+        AnalysisOptions(
+            model="gaussian", model_ib="gaussian", model_cell="gennormal"
+        ),
+    )
+
+    assert generalized.fit_kind == "one"
+    assert generalized.metrics["intact_fraction"] == 1.0
+    assert calculate_r_squared(generalized) > calculate_r_squared(gaussian)
+
+
+def test_generalized_normal_has_shape_lower_bound():
+    """The generalized-normal shape cannot collapse into an extreme cusp."""
+
+    opts = AnalysisOptions()
+    assert opts.gennormal_beta_bounds[0] >= 1.5
 
 
 # ---------------------------------------------------------------------------

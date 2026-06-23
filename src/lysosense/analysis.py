@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
-from scipy.stats import lognorm, norm
+from scipy.stats import gennorm, lognorm, norm
 
 from .io import Measurement
 
@@ -23,14 +23,15 @@ class _FitResult(TypedDict):
     hints: PeakHints
     model_ib: ModelType
     model_cell: ModelType
+    single_component: Optional[Literal["ib", "cell"]]
 
 
-ModelType = Literal["gaussian", "lognormal", "splitgaussian"]
+ModelType = Literal["gaussian", "lognormal", "splitgaussian", "gennormal"]
 
 
 def _params_per_peak(model: ModelType) -> int:
     """Return number of parameters per peak for a given model type."""
-    if model == "splitgaussian":
+    if model in ("splitgaussian", "gennormal"):
         return 4
     return 3
 _MIN_RELIABLE_SIGMA = 0.015  # �m; narrower hints are considered noise
@@ -54,9 +55,14 @@ class AnalysisOptions:
     sigma_right_bounds_ib: Tuple[float, float] = (0.01, 0.40)
     sigma_left_bounds_cells: Tuple[float, float] = (0.05, 0.50)
     sigma_right_bounds_cells: Tuple[float, float] = (0.05, 0.80)
+    gennormal_scale_bounds_ib: Tuple[float, float] = (0.01, 0.40)
+    gennormal_scale_bounds_cells: Tuple[float, float] = (0.04, 0.60)
+    gennormal_beta_bounds: Tuple[float, float] = (1.6, 8.0)
     second_peak_min_frac: float = 0.02
     dense_points: int = 1200
     max_peak_fwhm_um: Optional[float] = None
+    fit_weight_power: float = 0.2
+    fit_weight_offset: float = 0.5
 
     # --- Gated 2-peak decision parameters ---
     # Enable the gated 2-peak decision logic (recommended: True)
@@ -72,7 +78,7 @@ class AnalysisOptions:
     # Post-fit gate: minimum local dominance of second peak (fraction)
     local_dominance_threshold: float = 0.40
     # Post-fit gate: minimum second peak area fraction
-    second_peak_area_threshold: float = 0.05
+    second_peak_area_threshold: float = 0.03
     # Post-fit gate: minimum peak separation relative to average FWHM
     min_separation_fwhm_ratio: float = 0.8
 
@@ -123,6 +129,39 @@ class _NoResidualPeak(Exception):
 
 class _TwoPeakFitRejected(Exception):
     """Raised when the 2-peak fit fails post-fit validation checks."""
+
+
+@dataclass
+class _SingleFitCandidate:
+    component: Literal["ib", "cell"]
+    model: ModelType
+    popt: np.ndarray
+    pcov: np.ndarray
+    bic: float
+
+
+def _fit_with_optional_weights(
+    model_fn: Callable[..., np.ndarray],
+    x: np.ndarray,
+    y: np.ndarray,
+    p0: Tuple[float, ...],
+    bounds: Tuple[Tuple[float, ...], Tuple[float, ...]],
+    opts: AnalysisOptions,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if opts.fit_weight_power > 0.0:
+        weights = np.maximum(y, 0.0) + max(opts.fit_weight_offset, 1e-9)
+        sigma = 1.0 / np.power(weights, opts.fit_weight_power)
+        return curve_fit(
+            model_fn,
+            x,
+            y,
+            p0=p0,
+            bounds=bounds,
+            sigma=sigma,
+            absolute_sigma=False,
+            maxfev=100000,
+        )
+    return curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
 
 
 def _estimate_noise_from_residual(residual: np.ndarray) -> float:
@@ -202,6 +241,17 @@ def _find_residual_peak_candidate(
     valid_candidates.sort(key=lambda c: c[2], reverse=True)
     best = valid_candidates[0]
     return (best[0], best[1])
+
+
+def _positive_residual_area_fraction(
+    x: np.ndarray, residual: np.ndarray, y: np.ndarray
+) -> float:
+    """Return positive residual area as a fraction of positive signal area."""
+    signal_area = float(np.trapezoid(np.maximum(y, 0.0), x))
+    if signal_area <= 0.0:
+        return 0.0
+    residual_area = float(np.trapezoid(np.maximum(residual, 0.0), x))
+    return residual_area / signal_area
 
 
 def _calculate_bic(
@@ -285,6 +335,10 @@ def _calculate_fwhm_from_params(
         shape = float(params[2])
         mode = float(params[1])
         return float(2.0 * mode * np.sinh(shape * np.sqrt(2.0 * np.log(2.0))))
+    elif model_type == "gennormal":
+        scale = float(params[2])
+        beta = float(params[3])
+        return float(2.0 * scale * (np.log(2.0) ** (1.0 / beta)))
     elif model_type == "splitgaussian":
         # Use average of left and right sigma
         sigma_avg = 0.5 * (params[2] + params[3])
@@ -453,8 +507,13 @@ def _derive_metrics(
         m_cell = float(mean1 if cell_first else mean2)
         m_ib = float(mean2 if cell_first else mean1)
     else:
-        m_ib = float(_mean_from_params(model_ib, fitres["popt"]))
-        m_cell = None
+        single_component = fitres.get("single_component") or "ib"
+        if single_component == "cell":
+            m_cell = float(_mean_from_params(model_cell, fitres["popt"]))
+            m_ib = None
+        else:
+            m_ib = float(_mean_from_params(model_ib, fitres["popt"]))
+            m_cell = None
 
     intact_fraction = float(area_cells / area_total)
     lysis_eff = float(1.0 - intact_fraction)
@@ -472,6 +531,49 @@ def _derive_metrics(
     }
 
 
+def _fit_single_peak_candidate(
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    hints: PeakHints,
+    model_type: ModelType,
+    component: Literal["ib", "cell"],
+) -> _SingleFitCandidate:
+    is_ib = component == "ib"
+    target_mu = opts.mu_ib_um if is_ib else opts.mu_cell_um
+    hint = hints.get(component)
+
+    lo_mu = target_mu * (1 - opts.allow_shift_fraction)
+    hi_mu = target_mu * (1 + opts.allow_shift_fraction)
+    if hint:
+        lo_mu, hi_mu = _tight_bounds_from_hint(hint.mu, lo_mu, hi_mu)
+
+    mode_ref = float(np.clip(hint.mu if hint else target_mu, lo_mu, hi_mu))
+    amplitude = hint.amplitude if hint else max(float(np.max(y)), 1e-6)
+    p0 = _single_peak_initial_params(model_type, amplitude, mode_ref, hint, opts, is_ib)
+    bounds = _single_peak_bounds(
+        model_type, lo_mu, hi_mu, opts, hint, mode_ref, is_ib
+    )
+    model_fn = _one_peak_model(model_type)
+    popt, pcov = _fit_with_optional_weights(
+        model_fn,
+        x,
+        y,
+        p0,
+        (tuple(bounds[0]), tuple(bounds[1])),
+        opts,
+    )
+    y_fit = _eval_single_peak(x, model_type, popt)
+    bic = _calculate_bic(y, y_fit, _params_per_peak(model_type))
+    return _SingleFitCandidate(
+        component=component,
+        model=model_type,
+        popt=popt,
+        pcov=pcov,
+        bic=bic,
+    )
+
+
 def _fit_curve(
     x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
 ) -> _FitResult:
@@ -487,47 +589,67 @@ def _fit_curve(
     # Build initial params for single peak (IB peak)
     p1 = _single_peak_initial_params(model_ib, A1, mu_ib_guess, hints.get("ib"), opts, is_ib=True)
 
-    # --- Step 1: Always fit 1-peak model first ---
-    single_bounds = _bounds_for_one_peak(opts, hints, model_ib)
-    single_model = _one_peak_model(model_ib)
+    # --- Step 1: Fit plausible 1-peak models first ---
+    single_candidates: List[_SingleFitCandidate] = []
+    for component in ("ib", "cell"):
+        try:
+            single_candidates.append(
+                _fit_single_peak_candidate(
+                    x,
+                    y,
+                    opts,
+                    hints,
+                    model_ib if component == "ib" else model_cell,
+                    component,
+                )
+            )
+        except (RuntimeError, ValueError):
+            continue
 
-    try:
-        popt_1peak, pcov_1peak = curve_fit(
-            single_model, x, y, p0=p1, bounds=single_bounds, maxfev=100000
-        )
-    except (RuntimeError, ValueError):
-        # If even 1-peak fit fails, we have a problem
+    if not single_candidates:
         raise ValueError("Failed to fit even a single-peak model")
 
+    best_single = min(single_candidates, key=lambda candidate: candidate.bic)
+    popt_1peak = best_single.popt
+    pcov_1peak = best_single.pcov
+    model_1peak = best_single.model
+
     # Calculate 1-peak fit and residual
-    y_fit_1peak = _eval_single_peak(x, model_ib, popt_1peak)
+    y_fit_1peak = _eval_single_peak(x, model_1peak, popt_1peak)
     residual = y - y_fit_1peak
     main_peak_mu = float(popt_1peak[1])
 
     # Calculate BIC for 1-peak model
-    n_params_1peak = _params_per_peak(model_ib)
-    bic_1peak = _calculate_bic(y, y_fit_1peak, n_params_1peak)
+    bic_1peak = best_single.bic
 
     # --- Step 2: Check if gated 2-peak decision is enabled ---
     if not opts.use_gated_two_peak:
         # Fall back to original behavior
         return _fit_two_peak_legacy(x, y, opts, hints, model_ib, model_cell,
-                                     p1, popt_1peak, pcov_1peak, bic_1peak)
+                                     p1, popt_1peak, pcov_1peak, bic_1peak,
+                                     best_single.component)
 
     # --- Step 3: Pre-fit gate - check residual for second peak evidence ---
     residual_candidate = _find_residual_peak_candidate(x, residual, y, main_peak_mu, opts)
 
     if residual_candidate is None:
-        # No evidence of second peak in residual - use 1-peak model
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-        }
+        residual_area_frac = _positive_residual_area_fraction(x, residual, y)
+        if residual_area_frac < opts.residual_min_area_frac:
+            # No evidence of second peak in residual - use 1-peak model.
+            return {
+                "kind": "one",
+                "popt": popt_1peak,
+                "pcov": pcov_1peak,
+                "cell_first": None,
+                "hints": hints,
+                "model_ib": model_ib,
+                "model_cell": model_cell,
+                "single_component": best_single.component,
+            }
+        # Some asymmetric 1-peak fits absorb a small cell shoulder and leave a
+        # broad positive residual instead of a clean residual peak. Try the
+        # 2-peak fit when the residual mass is substantial; post-fit gates still
+        # decide whether the second component is valid.
 
     # --- Step 4: Attempt 2-peak fit ---
     p2 = _single_peak_initial_params(model_cell, A2, mu_cell_guess, hints.get("cell"), opts, is_ib=False)
@@ -537,7 +659,9 @@ def _fit_curve(
     model_fn = _two_peak_model(opts, model_ib, model_cell)
 
     try:
-        popt_2peak, pcov_2peak = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
+        popt_2peak, pcov_2peak = _fit_with_optional_weights(
+            model_fn, x, y, p0, bounds, opts
+        )
     except (RuntimeError, ValueError):
         # 2-peak fit failed - use 1-peak model
         return {
@@ -548,6 +672,7 @@ def _fit_curve(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": best_single.component,
         }
 
     # --- Step 5: Post-fit gates ---
@@ -569,16 +694,18 @@ def _fit_curve(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": best_single.component,
         }
 
     # Gate B: Area fraction of second peak
     area1 = float(np.trapezoid(comp1, x))
     area2 = float(np.trapezoid(comp2, x))
     total_area = area1 + area2
+    frac1 = area1 / max(total_area, 1e-12)
     frac2 = area2 / max(total_area, 1e-12)
 
-    if frac2 < opts.second_peak_area_threshold:
-        # Second peak too small - use 1-peak model
+    if min(frac1, frac2) < opts.second_peak_area_threshold:
+        # One component is too small to support a reliable 2-peak result.
         return {
             "kind": "one",
             "popt": popt_1peak,
@@ -587,6 +714,7 @@ def _fit_curve(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": best_single.component,
         }
 
     # Gate C: Local dominance of second peak
@@ -600,6 +728,7 @@ def _fit_curve(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": best_single.component,
         }
 
     # Gate D: Peak separation (optional but recommended)
@@ -619,6 +748,7 @@ def _fit_curve(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": best_single.component,
         }
 
     # Gate E: Second peak quality constraints (stricter than main peak)
@@ -661,6 +791,7 @@ def _fit_curve(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": best_single.component,
         }
 
     # All gates passed - accept 2-peak model
@@ -673,6 +804,7 @@ def _fit_curve(
         "hints": hints,
         "model_ib": model_ib,
         "model_cell": model_cell,
+        "single_component": None,
     }
 
 
@@ -687,6 +819,7 @@ def _fit_two_peak_legacy(
     popt_1peak: np.ndarray,
     pcov_1peak: np.ndarray,
     bic_1peak: float,
+    single_component: Literal["ib", "cell"],
 ) -> _FitResult:
     """Legacy 2-peak fitting logic (used when gated decision is disabled)."""
     base_p0, _ = _initial_guesses(x, y, opts)
@@ -699,12 +832,13 @@ def _fit_two_peak_legacy(
     model_fn = _two_peak_model(opts, model_ib, model_cell)
 
     try:
-        popt, pcov = curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
+        popt, pcov = _fit_with_optional_weights(model_fn, x, y, p0, bounds, opts)
         comp1, comp2 = _component_arrays_raw(x, popt, model_ib, model_cell)
         area1 = float(np.trapezoid(comp1, x))
         area2 = float(np.trapezoid(comp2, x))
+        frac1 = area1 / max(area1 + area2, 1e-12)
         frac2 = area2 / max(area1 + area2, 1e-12)
-        if frac2 < opts.second_peak_min_frac:
+        if min(frac1, frac2) < opts.second_peak_min_frac:
             raise _SecondPeakTooSmall
         cell_first = _determine_cell_first(popt, hints, opts, model_ib, model_cell)
         return {
@@ -715,6 +849,7 @@ def _fit_two_peak_legacy(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": None,
         }
     except (RuntimeError, ValueError, _SecondPeakTooSmall):
         return {
@@ -725,6 +860,7 @@ def _fit_two_peak_legacy(
             "hints": hints,
             "model_ib": model_ib,
             "model_cell": model_cell,
+            "single_component": single_component,
         }
 
 
@@ -796,6 +932,15 @@ def _single_peak_initial_params(
             *(opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells)
         )
         return (A, mu, s, s)  # Same sigma for left and right initially
+    elif model_type == "gennormal":
+        s_hint = hint.sigma if hint else None
+        sigma = np.clip(
+            s_hint if s_hint is not None else (0.08 if is_ib else 0.15),
+            *(opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells)
+        )
+        scale = float(sigma * np.sqrt(2.0))
+        beta = 2.5 if not is_ib else 2.0
+        return (A, mu, scale, beta)
     else:  # gaussian
         s_hint = hint.sigma if hint else None
         s = np.clip(
@@ -868,22 +1013,63 @@ def _single_peak_bounds(
         s_bounds = opts.s_bounds_logn_ib if is_ib else opts.s_bounds_logn_cells
         lo = [0, lo_mu, s_bounds[0]]
         hi = [np.inf, hi_mu, s_bounds[1]]
+        if hint and not is_ib:
+            _, sigma_hi = _sigma_bounds_from_hint(
+                hint.sigma, opts.sigma_bounds_gauss_cells
+            )
+            hint_fwhm_cap = sigma_hi * 2.354820045
+            max_shape_from_hint = _shape_cap_from_fwhm(hint_fwhm_cap, mode_ref)
+            if max_shape_from_hint is not None:
+                hi[2] = min(hi[2], max_shape_from_hint)
         # Apply FWHM cap
         max_shape = _shape_cap_from_fwhm(fwhm_limit, mode_ref)
         if max_shape is not None:
             hi[2] = min(hi[2], max_shape)
-            if hi[2] <= lo[2]:
-                hi[2] = max(lo[2] * 1.01, lo[2] + 1e-4)
+        if hi[2] <= lo[2]:
+            hi[2] = max(lo[2] * 1.01, lo[2] + 1e-4)
     elif model_type == "splitgaussian":
         left_bounds = opts.sigma_left_bounds_ib if is_ib else opts.sigma_left_bounds_cells
         right_bounds = opts.sigma_right_bounds_ib if is_ib else opts.sigma_right_bounds_cells
-        sigma_left_hi = left_bounds[1]
-        sigma_right_hi = right_bounds[1]
+        sigma_left_lo, sigma_left_hi = left_bounds
+        sigma_right_lo, sigma_right_hi = right_bounds
+        if hint and not is_ib:
+            sigma_left_lo, sigma_left_hi = _sigma_bounds_from_hint(
+                hint.sigma, left_bounds
+            )
+            sigma_right_lo, sigma_right_hi = _sigma_bounds_from_hint(
+                hint.sigma, right_bounds
+            )
         if max_sigma_cap is not None:
             sigma_left_hi = min(sigma_left_hi, max_sigma_cap)
             sigma_right_hi = min(sigma_right_hi, max_sigma_cap)
-        lo = [0, lo_mu, left_bounds[0], right_bounds[0]]
+            if sigma_left_hi <= sigma_left_lo:
+                sigma_left_hi = max(sigma_left_lo * 1.01, sigma_left_lo + 1e-4)
+            if sigma_right_hi <= sigma_right_lo:
+                sigma_right_hi = max(sigma_right_lo * 1.01, sigma_right_lo + 1e-4)
+        lo = [0, lo_mu, sigma_left_lo, sigma_right_lo]
         hi = [np.inf, hi_mu, sigma_left_hi, sigma_right_hi]
+    elif model_type == "gennormal":
+        scale_bounds = (
+            opts.gennormal_scale_bounds_ib
+            if is_ib
+            else opts.gennormal_scale_bounds_cells
+        )
+        scale_lo, scale_hi = scale_bounds
+        beta_lo, beta_hi = opts.gennormal_beta_bounds
+        if hint and not is_ib:
+            _, sigma_hi = _sigma_bounds_from_hint(
+                hint.sigma, opts.sigma_bounds_gauss_cells
+            )
+            # Beta can flatten the peak top, so allow a little more scale than
+            # the Gaussian-equivalent hint while still preventing broad shoulders.
+            scale_hi = min(scale_hi, sigma_hi * np.sqrt(2.0) * 1.4)
+        max_scale = _gennormal_scale_cap_from_fwhm(fwhm_limit, beta=2.0)
+        if max_scale is not None:
+            scale_hi = min(scale_hi, max_scale)
+        if scale_hi <= scale_lo:
+            scale_hi = max(scale_lo * 1.01, scale_lo + 1e-4)
+        lo = [0, lo_mu, scale_lo, beta_lo]
+        hi = [np.inf, hi_mu, scale_hi, beta_hi]
     else:  # gaussian
         sigma_bounds = opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells
         sigma_lo, sigma_hi = sigma_bounds
@@ -919,82 +1105,13 @@ def _two_peak_model(
     opts: AnalysisOptions, model_ib: ModelType, model_cell: ModelType
 ) -> Callable[..., np.ndarray]:
     """Create a two-peak model function with potentially different model types per peak."""
-    # Build parameter names dynamically for the signature
-    # We'll use *args and unpack manually to handle variable parameter counts
+    n_ib = _params_per_peak(model_ib)
 
-    model_fn: Callable[..., np.ndarray]
-
-    if model_ib == "lognormal" and model_cell == "lognormal":
-        def lognormal_lognormal_model(x, A1, m1, s1, A2, m2, s2):
-            scale1 = _lognorm_scale_from_mode(m1, s1)
-            scale2 = _lognorm_scale_from_mode(m2, s2)
-            return (
-                A1 * lognorm.pdf(x, s1, scale=scale1)
-                + A2 * lognorm.pdf(x, s2, scale=scale2)
-            )
-        model_fn = lognormal_lognormal_model
-    elif model_ib == "splitgaussian" and model_cell == "splitgaussian":
-        def splitgaussian_splitgaussian_model(x, A1, m1, s_left1, s_right1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
-            return (
-                _split_gaussian(x, A1, m1, s_left1, s_right1)
-                + _split_gaussian(x, A2, m2, s_left2, s_right2)
-            )
-        model_fn = splitgaussian_splitgaussian_model
-    elif model_ib == "gaussian" and model_cell == "gaussian":
-        def gaussian_gaussian_model(x, A1, m1, s1, A2, m2, s2):
-            return (
-                A1 * norm.pdf(x, loc=m1, scale=s1)
-                + A2 * norm.pdf(x, loc=m2, scale=s2)
-            )
-        model_fn = gaussian_gaussian_model
-    elif model_ib == "lognormal" and model_cell == "gaussian":
-        def lognormal_gaussian_model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
-            scale1 = _lognorm_scale_from_mode(m1, s1)
-            return (
-                A1 * lognorm.pdf(x, s1, scale=scale1)
-                + A2 * norm.pdf(x, loc=m2, scale=s2)
-            )
-        model_fn = lognormal_gaussian_model
-    elif model_ib == "gaussian" and model_cell == "lognormal":
-        def gaussian_lognormal_model(x, A1, m1, s1, A2, m2, s2):  # type: ignore[misc]
-            scale2 = _lognorm_scale_from_mode(m2, s2)
-            return (
-                A1 * norm.pdf(x, loc=m1, scale=s1)
-                + A2 * lognorm.pdf(x, s2, scale=scale2)
-            )
-        model_fn = gaussian_lognormal_model
-    elif model_ib == "splitgaussian" and model_cell == "gaussian":
-        def splitgaussian_gaussian_model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
-            return (
-                _split_gaussian(x, A1, m1, s_left1, s_right1)
-                + A2 * norm.pdf(x, loc=m2, scale=s2)
-            )
-        model_fn = splitgaussian_gaussian_model
-    elif model_ib == "gaussian" and model_cell == "splitgaussian":
-        def gaussian_splitgaussian_model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
-            return (
-                A1 * norm.pdf(x, loc=m1, scale=s1)
-                + _split_gaussian(x, A2, m2, s_left2, s_right2)
-            )
-        model_fn = gaussian_splitgaussian_model
-    elif model_ib == "splitgaussian" and model_cell == "lognormal":
-        def splitgaussian_lognormal_model(x, A1, m1, s_left1, s_right1, A2, m2, s2):  # type: ignore[misc]
-            scale2 = _lognorm_scale_from_mode(m2, s2)
-            return (
-                _split_gaussian(x, A1, m1, s_left1, s_right1)
-                + A2 * lognorm.pdf(x, s2, scale=scale2)
-            )
-        model_fn = splitgaussian_lognormal_model
-    elif model_ib == "lognormal" and model_cell == "splitgaussian":
-        def lognormal_splitgaussian_model(x, A1, m1, s1, A2, m2, s_left2, s_right2):  # type: ignore[misc]
-            scale1 = _lognorm_scale_from_mode(m1, s1)
-            return (
-                A1 * lognorm.pdf(x, s1, scale=scale1)
-                + _split_gaussian(x, A2, m2, s_left2, s_right2)
-            )
-        model_fn = lognormal_splitgaussian_model
-    else:
-        raise ValueError(f"Unknown model combination: {model_ib}, {model_cell}")
+    def model_fn(x: np.ndarray, *params: float) -> np.ndarray:
+        params_array = np.asarray(params, dtype=float)
+        return _eval_single_peak(
+            x, model_ib, params_array[:n_ib]
+        ) + _eval_single_peak(x, model_cell, params_array[n_ib:])
 
     return model_fn
 
@@ -1011,6 +1128,11 @@ def _one_peak_model(model_type: ModelType) -> Callable[..., np.ndarray]:
         def splitgaussian_model(x, A1, m1, s_left1, s_right1):  # type: ignore[misc]
             return _split_gaussian(x, A1, m1, s_left1, s_right1)
         model_fn = cast(Callable[..., np.ndarray], splitgaussian_model)
+    elif model_type == "gennormal":
+
+        def gennormal_model(x, A1, m1, scale1, beta1):  # type: ignore[misc]
+            return A1 * gennorm.pdf(x, beta1, loc=m1, scale=scale1)
+        model_fn = cast(Callable[..., np.ndarray], gennormal_model)
     else:
 
         def gaussian_model(x, A1, m1, s1):
@@ -1039,6 +1161,8 @@ def _eval_single_peak(
     if model_type == "lognormal":
         scale = _lognorm_scale_from_mode(params[1], params[2])
         return params[0] * lognorm.pdf(x, params[2], scale=scale)
+    elif model_type == "gennormal":
+        return params[0] * gennorm.pdf(x, params[3], loc=params[1], scale=params[2])
     elif model_type == "splitgaussian":
         return _split_gaussian(x, params[0], params[1], params[2], params[3])
     else:  # gaussian
@@ -1067,6 +1191,8 @@ def _mean_from_params(model_type: ModelType, params: np.ndarray) -> float:
         s_left = float(params[2])
         s_right = float(params[3])
         return float(mu + np.sqrt(2.0 / np.pi) * (s_right - s_left))
+    if model_type == "gennormal":
+        return float(params[1])
     return float(params[1])  # gaussian: mean == mode
 
 
@@ -1089,15 +1215,15 @@ def _component_arrays(
         else:
             cells, ibs = comp2, comp1
     else:
-        # NOTE (algorithm assumption): a single-peak result is attributed
-        # entirely to inclusion bodies, so intact_fraction = 0 and lysis = 100%.
-        # This is deliberate for homogenization samples (IB expected present),
-        # but a cell-dominant sample is only reported correctly if its peak
-        # triggers the 2-peak path. Validate against known-composition controls
-        # before changing this baseline assumption.
-        comp1 = _single_component(x, fitres["popt"], model_ib)
-        cells = np.zeros_like(comp1)
-        ibs = comp1
+        single_component = fitres.get("single_component") or "ib"
+        model_single = model_cell if single_component == "cell" else model_ib
+        comp1 = _single_component(x, fitres["popt"], model_single)
+        if single_component == "cell":
+            cells = comp1
+            ibs = np.zeros_like(comp1)
+        else:
+            cells = np.zeros_like(comp1)
+            ibs = comp1
     total = cells + ibs
     return total, cells, ibs
 
@@ -1312,6 +1438,14 @@ def _shape_cap_from_fwhm(limit_um: Optional[float], mode_um: float) -> Optional[
     if ratio <= 0:
         return None
     return float(np.arcsinh(ratio) / np.sqrt(2.0 * np.log(2.0)))
+
+
+def _gennormal_scale_cap_from_fwhm(
+    limit_um: Optional[float], beta: float
+) -> Optional[float]:
+    if limit_um is None or limit_um <= 0 or beta <= 0:
+        return None
+    return float(limit_um / (2.0 * (np.log(2.0) ** (1.0 / beta))))
 
 
 def _lognorm_scale_from_mode(mode: float, shape: float) -> float:
