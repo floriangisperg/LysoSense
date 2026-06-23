@@ -85,6 +85,22 @@ def test_two_peak_recovers_peak_locations():
     assert abs(mu_cell - truth["mu_cell"]) < 0.02
 
 
+def test_force_single_peak_disables_two_component_fit():
+    """Single-peak mode reports one component even for a resolved two-peak trace."""
+
+    x, y, _ = _two_peak_signal()
+    result = analyze_measurement(
+        _make_measurement(x, y, "forced-single"),
+        AnalysisOptions(force_single_peak=True),
+    )
+
+    assert result.fit_kind == "one"
+    assert (
+        result.metrics["area_cells"] == 0.0
+        or result.metrics["area_inclusion_bodies"] == 0.0
+    )
+
+
 def test_two_peak_recovers_component_fractions():
     """Component fractions are derived from the fitted areas.
 
@@ -227,6 +243,100 @@ def test_cell_dominant_single_peak_is_reported_as_cells():
     assert metrics[IB_MEAN_KEY] is None
     assert metrics[CELL_MEAN_KEY] is not None
     assert abs(metrics[CELL_MEAN_KEY] - 0.88) < 0.02
+
+
+def test_shifted_cell_peak_above_default_window_is_reported_as_cells():
+    """A lone cell peak near 1.0 um remains feasible when the hint shifts bounds."""
+
+    x = np.linspace(0.2, 1.4, 600)
+    y = _gaussian(x, 60.0, 1.035, 0.075)
+    result = analyze_measurement(_make_measurement(x, y, "shifted-cells"))
+
+    assert result.fit_kind == "one"
+    metrics = result.metrics
+    assert metrics["area_inclusion_bodies"] == 0.0
+    assert metrics[CELL_MEAN_KEY] is not None
+    assert abs(metrics[CELL_MEAN_KEY] - 1.035) < 0.02
+
+
+def test_shifted_overlapping_pilot3_like_peaks_are_fit_as_two_peaks():
+    """Pilot-3-style peaks around 0.68 and 0.98 um should not fail on p0 bounds."""
+
+    x = np.linspace(0.2, 1.4, 700)
+    y = _gaussian(x, 27.0, 0.676, 0.028)
+    y += _gaussian(x, 12.0, 0.978, 0.076)
+    result = analyze_measurement(_make_measurement(x, y, "pilot3-like"))
+
+    assert result.fit_kind == "two"
+    assert result.metrics[IB_MEAN_KEY] is not None
+    assert result.metrics[CELL_MEAN_KEY] is not None
+    assert abs(result.metrics[IB_MEAN_KEY] - 0.676) < 0.02
+    assert abs(result.metrics[CELL_MEAN_KEY] - 0.978) < 0.03
+
+
+def test_shifted_single_ib_peak_uses_configured_target_assignment():
+    """With new Pilot-3 targets, a lone 0.74 um peak is assigned to IBs."""
+
+    x = np.linspace(0.2, 1.4, 600)
+    y = _gaussian(x, 22.0, 0.735, 0.07)
+    opts = AnalysisOptions(mu_ib_um=0.70, mu_cell_um=1.00, allow_shift_fraction=0.25)
+    result = analyze_measurement(_make_measurement(x, y, "shifted-ib"), opts)
+
+    assert result.fit_kind == "one"
+    assert result.metrics["area_cells"] == 0.0
+    assert result.metrics[IB_MEAN_KEY] is not None
+    assert abs(result.metrics[IB_MEAN_KEY] - 0.735) < 0.02
+
+
+def test_shifted_single_cell_peak_uses_configured_target_assignment():
+    """With new Pilot-3 targets, a lone 1.03 um peak is assigned to cells."""
+
+    x = np.linspace(0.2, 1.4, 600)
+    y = _gaussian(x, 60.0, 1.035, 0.087)
+    opts = AnalysisOptions(mu_ib_um=0.70, mu_cell_um=1.00, allow_shift_fraction=0.25)
+    result = analyze_measurement(_make_measurement(x, y, "shifted-rbm"), opts)
+
+    assert result.fit_kind == "one"
+    assert result.metrics["area_inclusion_bodies"] == 0.0
+    assert result.metrics[CELL_MEAN_KEY] is not None
+    assert abs(result.metrics[CELL_MEAN_KEY] - 1.035) < 0.02
+
+
+def test_overlapping_shoulder_stays_one_peak_without_overlap_deconvolution():
+    """A non-resolved shoulder is not forced into cells unless enabled."""
+
+    x = np.linspace(0.2, 1.3, 700)
+    y = _gaussian(x, 22.0, 0.735, 0.14)
+    y += _gaussian(x, 3.5, 1.03, 0.08)
+    opts = AnalysisOptions(
+        mu_ib_um=0.70,
+        mu_cell_um=1.00,
+        min_separation_fwhm_ratio=5.0,
+    )
+    result = analyze_measurement(_make_measurement(x, y, "shoulder-off"), opts)
+
+    assert result.fit_kind == "one"
+    assert result.metrics["area_cells"] == 0.0
+
+
+def test_overlap_deconvolution_fits_a_real_cell_peak():
+    """Overlap mode fits a constrained cell peak instead of residual clipping."""
+
+    x = np.linspace(0.2, 1.3, 700)
+    y = _gaussian(x, 22.0, 0.735, 0.14)
+    y += _gaussian(x, 3.5, 1.03, 0.08)
+    opts = AnalysisOptions(
+        mu_ib_um=0.70,
+        mu_cell_um=1.00,
+        min_separation_fwhm_ratio=5.0,
+        use_overlap_deconvolution=True,
+    )
+    result = analyze_measurement(_make_measurement(x, y, "overlap"), opts)
+
+    assert result.fit_kind == "overlap"
+    assert result.metrics[CELL_MEAN_KEY] is not None
+    assert abs(result.metrics[CELL_MEAN_KEY] - 1.03) < 0.05
+    assert result.metrics["area_cells"] > 0.0
 
 
 def test_tiny_secondary_component_is_rejected():

@@ -16,7 +16,7 @@ from .io import Measurement
 
 class _FitResult(TypedDict):
     """Type definition for fit result dictionary."""
-    kind: Literal["one", "two"]
+    kind: Literal["one", "two", "overlap"]
     popt: np.ndarray
     pcov: np.ndarray
     cell_first: Optional[bool]
@@ -63,6 +63,7 @@ class AnalysisOptions:
     max_peak_fwhm_um: Optional[float] = None
     fit_weight_power: float = 0.2
     fit_weight_offset: float = 0.5
+    force_single_peak: bool = False
 
     # --- Gated 2-peak decision parameters ---
     # Enable the gated 2-peak decision logic (recommended: True)
@@ -92,6 +93,18 @@ class AnalysisOptions:
     # Set to 0 to disable. Note: prominence can be 0 for valid peaks sitting on a shoulder.
     min_prominence_second_peak_sigma: float = 0.0
 
+    # --- Overlap deconvolution ---
+    # Fit two constrained peak shapes even when the second peak is only visible
+    # as a shoulder, without requiring local-maxima/separation gates.
+    use_overlap_deconvolution: bool = False
+    overlap_cell_shift_fraction: float = 0.12
+    overlap_ib_center_window_um: float = 0.04
+    overlap_max_ib_fwhm_um: float = 0.35
+    overlap_max_cell_fwhm_um: float = 0.30
+    overlap_min_area_frac: float = 0.03
+    overlap_min_r2_gain: float = 0.02
+    overlap_min_shoulder_rss_reduction: float = 0.20
+
     def get_model_ib(self) -> ModelType:
         return self.model_ib if self.model_ib else self.model
 
@@ -105,7 +118,7 @@ class AnalysisResult:
     observed: pd.DataFrame
     dense_fit: pd.DataFrame
     metrics: Dict[str, float | str | None]
-    fit_kind: Literal["one", "two"]
+    fit_kind: Literal["one", "two", "overlap"]
     options: AnalysisOptions
 
 
@@ -148,6 +161,7 @@ def _fit_with_optional_weights(
     bounds: Tuple[Tuple[float, ...], Tuple[float, ...]],
     opts: AnalysisOptions,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    p0 = _clip_initial_params_to_bounds(p0, bounds)
     if opts.fit_weight_power > 0.0:
         weights = np.maximum(y, 0.0) + max(opts.fit_weight_offset, 1e-9)
         sigma = 1.0 / np.power(weights, opts.fit_weight_power)
@@ -162,6 +176,23 @@ def _fit_with_optional_weights(
             maxfev=100000,
         )
     return curve_fit(model_fn, x, y, p0=p0, bounds=bounds, maxfev=100000)
+
+
+def _clip_initial_params_to_bounds(
+    p0: Tuple[float, ...],
+    bounds: Tuple[Tuple[float, ...], Tuple[float, ...]],
+) -> Tuple[float, ...]:
+    """Keep hint-derived optimizer starts feasible after final bounds are known."""
+    lower, upper = bounds
+    clipped: List[float] = []
+    for value, lo, hi in zip(p0, lower, upper):
+        value_f = float(value)
+        if np.isfinite(lo) and value_f < lo:
+            value_f = float(lo)
+        if np.isfinite(hi) and value_f > hi:
+            value_f = float(hi)
+        clipped.append(value_f)
+    return tuple(clipped)
 
 
 def _estimate_noise_from_residual(residual: np.ndarray) -> float:
@@ -493,7 +524,7 @@ def _derive_metrics(
 
     model_ib = fitres.get("model_ib", opts.get_model_ib())
     model_cell = fitres.get("model_cell", opts.get_model_cell())
-    if fitres["kind"] == "two":
+    if fitres["kind"] in ("two", "overlap"):
         n1 = _params_per_peak(model_ib)
         mean1 = _mean_from_params(model_ib, fitres["popt"][:n1])
         mean2 = _mean_from_params(model_cell, fitres["popt"][n1:])
@@ -574,6 +605,176 @@ def _fit_single_peak_candidate(
     )
 
 
+def _select_single_peak_candidate(
+    candidates: List[_SingleFitCandidate], opts: AnalysisOptions
+) -> _SingleFitCandidate:
+    best = min(candidates, key=lambda candidate: candidate.bic)
+    best_mode = float(best.popt[1])
+    own_target = opts.mu_ib_um if best.component == "ib" else opts.mu_cell_um
+    other_target = opts.mu_cell_um if best.component == "ib" else opts.mu_ib_um
+
+    if abs(best_mode - other_target) >= abs(best_mode - own_target):
+        return best
+
+    other_component: Literal["ib", "cell"] = (
+        "cell" if best.component == "ib" else "ib"
+    )
+    for candidate in candidates:
+        if candidate.component == other_component:
+            return candidate
+    return best
+
+
+def _one_peak_fit_result(
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    hints: PeakHints,
+    model_ib: ModelType,
+    model_cell: ModelType,
+    popt_1peak: np.ndarray,
+    pcov_1peak: np.ndarray,
+    bic_1peak: float,
+    model_1peak: ModelType,
+    single_component: Literal["ib", "cell"],
+) -> _FitResult:
+    overlap = _fit_overlap_deconvolution(
+        x,
+        y,
+        opts,
+        hints,
+        popt_1peak,
+        bic_1peak,
+        model_1peak,
+        single_component,
+    )
+    if overlap is not None:
+        return overlap
+
+    return {
+        "kind": "one",
+        "popt": popt_1peak,
+        "pcov": pcov_1peak,
+        "cell_first": None,
+        "hints": hints,
+        "model_ib": model_ib,
+        "model_cell": model_cell,
+        "single_component": single_component,
+    }
+
+
+def _fit_overlap_deconvolution(
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    hints: PeakHints,
+    popt_1peak: np.ndarray,
+    bic_1peak: float,
+    model_1peak: ModelType,
+    single_component: Literal["ib", "cell"],
+) -> Optional[_FitResult]:
+    if not opts.use_overlap_deconvolution or single_component != "ib":
+        return None
+    if opts.mu_cell_um <= opts.mu_ib_um:
+        return None
+
+    model_ib: ModelType = "gaussian"
+    model_cell: ModelType = "gaussian"
+    ib_hint = hints.get("ib")
+    ib_seed_mu = float(ib_hint.mu if ib_hint else popt_1peak[1])
+
+    lo_mu_ib = max(
+        opts.mu_ib_um * (1.0 - opts.allow_shift_fraction),
+        ib_seed_mu - opts.overlap_ib_center_window_um,
+    )
+    hi_mu_ib = min(
+        opts.mu_ib_um * (1.0 + opts.allow_shift_fraction),
+        ib_seed_mu + opts.overlap_ib_center_window_um,
+    )
+    if hi_mu_ib <= lo_mu_ib:
+        return None
+
+    lo_mu_cell = opts.mu_cell_um * (1.0 - opts.overlap_cell_shift_fraction)
+    hi_mu_cell = opts.mu_cell_um * (1.0 + opts.overlap_cell_shift_fraction)
+    if hi_mu_cell <= lo_mu_cell:
+        return None
+
+    sigma_ib_hi = _sigma_cap_from_fwhm(opts.overlap_max_ib_fwhm_um) or 0.15
+    sigma_cell_hi = _sigma_cap_from_fwhm(opts.overlap_max_cell_fwhm_um) or 0.13
+    bounds = (
+        (0.0, lo_mu_ib, 0.04, 0.0, lo_mu_cell, 0.04),
+        (np.inf, hi_mu_ib, sigma_ib_hi, np.inf, hi_mu_cell, sigma_cell_hi),
+    )
+
+    signal_area = max(float(np.trapezoid(np.maximum(y, 0.0), x)), 1e-6)
+    p0 = (
+        signal_area * 0.80,
+        float(np.clip(ib_seed_mu, lo_mu_ib, hi_mu_ib)),
+        min(max(0.12, 0.04), sigma_ib_hi),
+        signal_area * 0.15,
+        float(np.clip(opts.mu_cell_um, lo_mu_cell, hi_mu_cell)),
+        min(max(0.08, 0.04), sigma_cell_hi),
+    )
+
+    try:
+        popt, pcov = _fit_with_optional_weights(
+            _two_peak_model(opts, model_ib, model_cell),
+            x,
+            y,
+            p0,
+            bounds,
+            opts,
+        )
+    except (RuntimeError, ValueError):
+        return None
+
+    comp_ib, comp_cell = _component_arrays_raw(x, popt, model_ib, model_cell)
+    y_fit_2peak = comp_ib + comp_cell
+    y_fit_1peak = _eval_single_peak(x, model_1peak, popt_1peak)
+
+    if _r_squared(y, y_fit_2peak) - _r_squared(y, y_fit_1peak) < opts.overlap_min_r2_gain:
+        return None
+
+    bic_2peak = _calculate_bic(y, y_fit_2peak, 6)
+    if bic_2peak >= bic_1peak:
+        return None
+
+    area_ib = float(np.trapezoid(comp_ib, x))
+    area_cell = float(np.trapezoid(comp_cell, x))
+    area_total = max(area_ib + area_cell, 1e-12)
+    cell_frac = area_cell / area_total
+    if cell_frac < opts.overlap_min_area_frac:
+        return None
+
+    shoulder_mask = x >= opts.mu_cell_um * (1.0 - opts.overlap_cell_shift_fraction)
+    if np.count_nonzero(shoulder_mask) >= 4:
+        rss_1 = float(np.sum((y[shoulder_mask] - y_fit_1peak[shoulder_mask]) ** 2))
+        rss_2 = float(np.sum((y[shoulder_mask] - y_fit_2peak[shoulder_mask]) ** 2))
+        if rss_1 > 0.0:
+            reduction = (rss_1 - rss_2) / rss_1
+            if reduction < opts.overlap_min_shoulder_rss_reduction:
+                return None
+
+    return {
+        "kind": "overlap",
+        "popt": popt,
+        "pcov": pcov,
+        "cell_first": False,
+        "hints": hints,
+        "model_ib": model_ib,
+        "model_cell": model_cell,
+        "single_component": None,
+    }
+
+
+def _r_squared(y: np.ndarray, y_fit: np.ndarray) -> float:
+    ss_res = float(np.sum((y - y_fit) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    if ss_tot <= 0:
+        return 1.0 if ss_res <= 0 else 0.0
+    return float(1.0 - ss_res / ss_tot)
+
+
 def _fit_curve(
     x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
 ) -> _FitResult:
@@ -609,10 +810,21 @@ def _fit_curve(
     if not single_candidates:
         raise ValueError("Failed to fit even a single-peak model")
 
-    best_single = min(single_candidates, key=lambda candidate: candidate.bic)
+    best_single = _select_single_peak_candidate(single_candidates, opts)
     popt_1peak = best_single.popt
     pcov_1peak = best_single.pcov
     model_1peak = best_single.model
+    if opts.force_single_peak:
+        return {
+            "kind": "one",
+            "popt": popt_1peak,
+            "pcov": pcov_1peak,
+            "cell_first": None,
+            "hints": hints,
+            "model_ib": model_ib,
+            "model_cell": model_cell,
+            "single_component": best_single.component,
+        }
 
     # Calculate 1-peak fit and residual
     y_fit_1peak = _eval_single_peak(x, model_1peak, popt_1peak)
@@ -627,7 +839,7 @@ def _fit_curve(
         # Fall back to original behavior
         return _fit_two_peak_legacy(x, y, opts, hints, model_ib, model_cell,
                                      p1, popt_1peak, pcov_1peak, bic_1peak,
-                                     best_single.component)
+                                     model_1peak, best_single.component)
 
     # --- Step 3: Pre-fit gate - check residual for second peak evidence ---
     residual_candidate = _find_residual_peak_candidate(x, residual, y, main_peak_mu, opts)
@@ -636,16 +848,11 @@ def _fit_curve(
         residual_area_frac = _positive_residual_area_fraction(x, residual, y)
         if residual_area_frac < opts.residual_min_area_frac:
             # No evidence of second peak in residual - use 1-peak model.
-            return {
-                "kind": "one",
-                "popt": popt_1peak,
-                "pcov": pcov_1peak,
-                "cell_first": None,
-                "hints": hints,
-                "model_ib": model_ib,
-                "model_cell": model_cell,
-                "single_component": best_single.component,
-            }
+            return _one_peak_fit_result(
+                x, y, opts, hints, model_ib, model_cell,
+                popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+                best_single.component
+            )
         # Some asymmetric 1-peak fits absorb a small cell shoulder and leave a
         # broad positive residual instead of a clean residual peak. Try the
         # 2-peak fit when the residual mass is substantial; post-fit gates still
@@ -664,16 +871,11 @@ def _fit_curve(
         )
     except (RuntimeError, ValueError):
         # 2-peak fit failed - use 1-peak model
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": best_single.component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+            best_single.component
+        )
 
     # --- Step 5: Post-fit gates ---
     comp1, comp2 = _component_arrays_raw(x, popt_2peak, model_ib, model_cell)
@@ -686,16 +888,11 @@ def _fit_curve(
 
     if delta_bic >= opts.bic_improvement_threshold:
         # BIC doesn't improve enough - use 1-peak model
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": best_single.component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+            best_single.component
+        )
 
     # Gate B: Area fraction of second peak
     area1 = float(np.trapezoid(comp1, x))
@@ -706,30 +903,20 @@ def _fit_curve(
 
     if min(frac1, frac2) < opts.second_peak_area_threshold:
         # One component is too small to support a reliable 2-peak result.
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": best_single.component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+            best_single.component
+        )
 
     # Gate C: Local dominance of second peak
     if not _check_local_dominance(x, comp1, comp2, opts.local_dominance_threshold):
         # Second peak doesn't dominate anywhere - use 1-peak model
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": best_single.component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+            best_single.component
+        )
 
     # Gate D: Peak separation (optional but recommended)
     mu1 = float(popt_2peak[1])
@@ -740,16 +927,11 @@ def _fit_curve(
 
     if not _check_separation(mu1, mu2, fwhm1, fwhm2, opts.min_separation_fwhm_ratio):
         # Peaks too close / overlapping - use 1-peak model
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": best_single.component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+            best_single.component
+        )
 
     # Gate E: Second peak quality constraints (stricter than main peak)
     # Identify which component is the second (smaller) peak
@@ -783,16 +965,11 @@ def _fit_curve(
 
     if not quality_ok:
         # Second peak doesn't meet quality standards - use 1-peak model
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": best_single.component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak,
+            best_single.component
+        )
 
     # All gates passed - accept 2-peak model
     cell_first = _determine_cell_first(popt_2peak, hints, opts, model_ib, model_cell)
@@ -819,6 +996,7 @@ def _fit_two_peak_legacy(
     popt_1peak: np.ndarray,
     pcov_1peak: np.ndarray,
     bic_1peak: float,
+    model_1peak: ModelType,
     single_component: Literal["ib", "cell"],
 ) -> _FitResult:
     """Legacy 2-peak fitting logic (used when gated decision is disabled)."""
@@ -852,16 +1030,10 @@ def _fit_two_peak_legacy(
             "single_component": None,
         }
     except (RuntimeError, ValueError, _SecondPeakTooSmall):
-        return {
-            "kind": "one",
-            "popt": popt_1peak,
-            "pcov": pcov_1peak,
-            "cell_first": None,
-            "hints": hints,
-            "model_ib": model_ib,
-            "model_cell": model_cell,
-            "single_component": single_component,
-        }
+        return _one_peak_fit_result(
+            x, y, opts, hints, model_ib, model_cell,
+            popt_1peak, pcov_1peak, bic_1peak, model_1peak, single_component
+        )
 
 
 def _initial_guesses(
@@ -883,6 +1055,7 @@ def _initial_guesses(
         ib_hint = _estimate_peak_hint(x, y, opts.mu_ib_um, span, baseline_guess)
     if cell_hint is None:
         cell_hint = _estimate_peak_hint(x, y, opts.mu_cell_um, span, baseline_guess)
+    ib_hint, cell_hint = _deduplicate_component_hints(ib_hint, cell_hint, opts)
 
     # Amplitudes default to global estimates but prefer hint-derived values
     ib_amp_default = max(max_signal - baseline_guess, 1e-6) * 0.9
@@ -908,6 +1081,22 @@ def _initial_guesses(
     )
 
     return (A1, mu_ib_guess, A2, mu_cell_guess), {"ib": ib_hint, "cell": cell_hint}
+
+
+def _deduplicate_component_hints(
+    ib_hint: Optional[_PeakHint],
+    cell_hint: Optional[_PeakHint],
+    opts: AnalysisOptions,
+) -> Tuple[Optional[_PeakHint], Optional[_PeakHint]]:
+    if ib_hint is None or cell_hint is None:
+        return ib_hint, cell_hint
+    if abs(ib_hint.mu - cell_hint.mu) > 0.05:
+        return ib_hint, cell_hint
+
+    shared_mu = 0.5 * (ib_hint.mu + cell_hint.mu)
+    if abs(shared_mu - opts.mu_ib_um) <= abs(shared_mu - opts.mu_cell_um):
+        return ib_hint, None
+    return None, cell_hint
 
 
 def _single_peak_initial_params(
@@ -1202,7 +1391,7 @@ def _component_arrays(
     model_ib = fitres.get("model_ib", opts.get_model_ib())
     model_cell = fitres.get("model_cell", opts.get_model_cell())
 
-    if fitres["kind"] == "two":
+    if fitres["kind"] in ("two", "overlap"):
         comp1, comp2 = _component_arrays_raw(x, fitres["popt"], model_ib, model_cell)
         n1 = _params_per_peak(model_ib)
         m1 = fitres["popt"][1]

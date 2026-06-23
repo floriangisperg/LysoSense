@@ -11,8 +11,7 @@ import streamlit as st
 
 # Import the repo's `src/lysosense` package, not an older copy from site-packages.
 # Streamlit (re)runs this file with sys.path already populated; if `src` is present
-# but not first, a pip-installed `lysosense` can win and lack newer fields such as
-# `use_gated_two_peak` on AnalysisOptions.
+# but not first, a pip-installed `lysosense` can win and lack newer AnalysisOptions.
 _repo_root = Path(__file__).resolve().parent.parent
 _src = str(_repo_root / "src")
 if _src in sys.path:
@@ -355,56 +354,33 @@ def _render_sidebar() -> Tuple[
                 key="fit_weight_power",
             )
 
-            # Gated 2-peak decision settings
-            st.markdown("**2-Peak Detection**")
-            use_gated = st.checkbox(
-                "Use gated 2-peak detection",
-                value=True,
-                help="Require evidence of a second peak in the residual before attempting 2-peak fit. Recommended: ON.",
-                key="use_gated",
+            st.markdown("**Peak Detection**")
+            detection_modes = (
+                "Automatic",
+                "Resolved peaks only",
+                "Allow overlapping peaks",
+                "Single peak only",
+            )
+            default_detection_mode = st.session_state.get(
+                "peak_detection_mode", "Automatic"
+            )
+            default_detection_index = (
+                detection_modes.index(default_detection_mode)
+                if default_detection_mode in detection_modes
+                else 0
+            )
+            peak_detection_mode = st.radio(
+                "Peak detection mode",
+                detection_modes,
+                index=default_detection_index,
+                help=(
+                    "Automatic tries resolved peaks first and overlap deconvolution only if needed. "
+                    "Resolved peaks only is stricter. Single peak only disables two-component fits."
+                ),
+                key="peak_detection_mode",
             )
 
-            if use_gated:
-                # Sensitivity presets
-                sensitivity_presets = {
-                    "Low (strict)": {
-                        "residual_prominence": 4.0,
-                        "residual_distance": 0.20,
-                        "residual_area": 8.0,
-                        "bic_threshold": -15.0,
-                        "local_dominance": 50.0,
-                        "second_area": 8.0,
-                        "separation_ratio": 1.0,
-                        "max_fwhm_second": 0.15,
-                        "min_compactness": 5.0,
-                        "min_prominence_sigma": 2.0,
-                    },
-                    "Medium (default)": {
-                        "residual_prominence": 3.0,
-                        "residual_distance": 0.15,
-                        "residual_area": 5.0,
-                        "bic_threshold": -10.0,
-                        "local_dominance": 40.0,
-                        "second_area": 3.0,
-                        "separation_ratio": 0.8,
-                        "max_fwhm_second": 0.25,
-                        "min_compactness": 0.0,
-                        "min_prominence_sigma": 0.0,
-                    },
-                    "High (sensitive)": {
-                        "residual_prominence": 2.0,
-                        "residual_distance": 0.10,
-                        "residual_area": 3.0,
-                        "bic_threshold": -5.0,
-                        "local_dominance": 30.0,
-                        "second_area": 3.0,
-                        "separation_ratio": 0.5,
-                        "max_fwhm_second": 0.30,
-                        "min_compactness": 0.0,
-                        "min_prominence_sigma": 0.0,
-                    },
-                }
-
+            with st.expander("Advanced peak settings", expanded=False):
                 sensitivity = st.select_slider(
                     "Sensitivity",
                     options=["Low (strict)", "Medium (default)", "High (sensitive)", "Custom"],
@@ -414,9 +390,8 @@ def _render_sidebar() -> Tuple[
                 )
 
                 if sensitivity == "Custom":
-                    st.markdown("---")
-                    st.markdown("**Pre-fit gates** (checked before 2-peak fit)")
-                    residual_prominence = st.slider(
+                    st.markdown("**Resolved peak gates**")
+                    st.slider(
                         "Residual prominence (× noise σ)",
                         min_value=1.0,
                         max_value=6.0,
@@ -425,7 +400,7 @@ def _render_sidebar() -> Tuple[
                         help="Minimum prominence of residual peak candidate (higher = stricter)",
                         key="residual_prominence",
                     )
-                    residual_distance = st.slider(
+                    st.slider(
                         "Min residual distance (µm)",
                         min_value=0.05,
                         max_value=0.30,
@@ -434,7 +409,7 @@ def _render_sidebar() -> Tuple[
                         help="Minimum distance from main peak for residual candidate",
                         key="residual_distance",
                     )
-                    residual_area = st.slider(
+                    st.slider(
                         "Min residual area (%)",
                         min_value=1.0,
                         max_value=10.0,
@@ -443,9 +418,7 @@ def _render_sidebar() -> Tuple[
                         help="Minimum residual area as fraction of total signal",
                         key="residual_area",
                     )
-
-                    st.markdown("**Post-fit gates** (checked after 2-peak fit)")
-                    bic_threshold = st.slider(
+                    st.slider(
                         "BIC improvement threshold",
                         min_value=-20.0,
                         max_value=-2.0,
@@ -454,7 +427,7 @@ def _render_sidebar() -> Tuple[
                         help="2-peak model must improve BIC by this much (more negative = stricter)",
                         key="bic_threshold",
                     )
-                    local_dominance = st.slider(
+                    st.slider(
                         "Local dominance (%)",
                         min_value=20.0,
                         max_value=60.0,
@@ -463,7 +436,7 @@ def _render_sidebar() -> Tuple[
                         help="Second peak must dominate this much somewhere locally",
                         key="local_dominance",
                     )
-                    second_area = st.slider(
+                    st.slider(
                         "Min 2nd peak area (%)",
                         min_value=1.0,
                         max_value=10.0,
@@ -472,7 +445,7 @@ def _render_sidebar() -> Tuple[
                         help="Minimum area fraction for second peak",
                         key="second_area",
                     )
-                    separation_ratio = st.slider(
+                    st.slider(
                         "Min separation (× avg FWHM)",
                         min_value=0.3,
                         max_value=1.5,
@@ -481,18 +454,16 @@ def _render_sidebar() -> Tuple[
                         help="Peak separation relative to average FWHM (higher = stricter)",
                         key="separation_ratio",
                     )
-
-                    st.markdown("**Second Peak Quality** (Cell peak bounds)")
-                    max_fwhm_second = st.slider(
+                    st.slider(
                         "Max Cell peak FWHM (µm)",
                         min_value=0.08,
                         max_value=0.30,
                         value=0.25,
                         step=0.01,
-                        help="Maximum FWHM for the Cell peak during FITTING. This bounds the optimizer directly.",
+                        help="Maximum FWHM for the Cell peak during fitting.",
                         key="max_fwhm_second",
                     )
-                    min_compactness = st.slider(
+                    st.slider(
                         "Min compactness (area/FWHM)",
                         min_value=0.0,
                         max_value=30.0,
@@ -501,28 +472,53 @@ def _render_sidebar() -> Tuple[
                         help="Post-fit check: minimum compactness for second peak. 0 = disabled.",
                         key="min_compactness",
                     )
-                    min_prominence_sigma = st.slider(
+                    st.slider(
                         "Min prominence (× noise σ)",
                         min_value=0.0,
                         max_value=5.0,
                         value=0.0,
                         step=0.5,
-                        help="Post-fit check: minimum prominence above shoulder. 0 = disabled.",
+                        help="Post-fit check: minimum prominence above the main peak shoulder. 0 = disabled.",
                         key="min_prominence_sigma",
                     )
-            else:
-                # Default values when gated detection is disabled
-                sensitivity = "Medium (default)"
-                residual_prominence = 3.0
-                residual_distance = 0.15
-                residual_area = 5.0
-                bic_threshold = -10.0
-                local_dominance = 40.0
-                second_area = 3.0
-                separation_ratio = 0.8
-                max_fwhm_second = 0.25
-                min_compactness = 0.0
-                min_prominence_sigma = 0.0
+
+                st.markdown("**Overlap deconvolution**")
+                st.slider(
+                    "Cell center shift (%)",
+                    min_value=5,
+                    max_value=25,
+                    value=12,
+                    step=1,
+                    help="Allowed cell peak center shift around the configured cell target.",
+                    key="overlap_cell_shift",
+                )
+                st.slider(
+                    "Max overlap IB FWHM (µm)",
+                    min_value=0.15,
+                    max_value=0.50,
+                    value=0.35,
+                    step=0.01,
+                    help="Maximum IB peak width in overlap deconvolution.",
+                    key="overlap_max_ib_fwhm",
+                )
+                st.slider(
+                    "Max overlap cell FWHM (µm)",
+                    min_value=0.10,
+                    max_value=0.45,
+                    value=0.30,
+                    step=0.01,
+                    help="Maximum cell peak width in overlap deconvolution.",
+                    key="overlap_max_cell_fwhm",
+                )
+                st.slider(
+                    "Min overlap cell area (%)",
+                    min_value=1.0,
+                    max_value=15.0,
+                    value=3.0,
+                    step=0.5,
+                    help="Minimum fitted cell area needed to accept an overlap deconvolution.",
+                    key="overlap_min_area",
+                )
 
         # Visualization section (merged with display options)
         with st.sidebar.expander("📊 Visualization", expanded=True):
@@ -563,6 +559,22 @@ def _render_sidebar() -> Tuple[
                             "limit_size_range",
                             "size_min_um",
                             "size_max_um",
+                            "peak_detection_mode",
+                            "sensitivity",
+                            "residual_prominence",
+                            "residual_distance",
+                            "residual_area",
+                            "bic_threshold",
+                            "local_dominance",
+                            "second_area",
+                            "separation_ratio",
+                            "max_fwhm_second",
+                            "min_compactness",
+                            "min_prominence_sigma",
+                            "overlap_cell_shift",
+                            "overlap_max_ib_fwhm",
+                            "overlap_max_cell_fwhm",
+                            "overlap_min_area",
                         )
                     ):
                         del st.session_state[key]
@@ -587,8 +599,7 @@ def _render_sidebar() -> Tuple[
         limit_size_range = True
         size_min_um = 0.2
         size_max_um = 1.2
-        # Gated 2-peak defaults
-        use_gated = True
+        peak_detection_mode = "Automatic"
         sensitivity = "Medium (default)"
         # Second peak quality defaults
         residual_prominence = 3.0
@@ -610,8 +621,18 @@ def _render_sidebar() -> Tuple[
         if peak_width_cap == 0.0:  # safe_float returns 0.0 on error by default
             peak_width_cap = None
 
-    # Get gated parameters from session state (or use defaults if not set)
-    use_gated = st.session_state.get("use_gated", True)
+    peak_detection_mode = st.session_state.get(
+        "peak_detection_mode", peak_detection_mode
+    )
+    force_single_peak = peak_detection_mode == "Single peak only"
+    use_overlap_deconvolution = peak_detection_mode in (
+        "Automatic",
+        "Allow overlapping peaks",
+    )
+    overlap_cell_shift = st.session_state.get("overlap_cell_shift", 12)
+    overlap_max_ib_fwhm = st.session_state.get("overlap_max_ib_fwhm", 0.35)
+    overlap_max_cell_fwhm = st.session_state.get("overlap_max_cell_fwhm", 0.30)
+    overlap_min_area = st.session_state.get("overlap_min_area", 3.0)
 
     # Sensitivity presets
     sensitivity_presets = {
@@ -688,7 +709,8 @@ def _render_sidebar() -> Tuple[
         second_peak_min_frac=safe_float(second_peak_percent, 0.02),
         max_peak_fwhm_um=peak_width_cap,
         fit_weight_power=safe_float(fit_weight_power, 0.2),
-        use_gated_two_peak=bool(use_gated),
+        force_single_peak=force_single_peak,
+        use_gated_two_peak=True,
         residual_prominence_sigma=safe_float(residual_prominence, 3.0),
         residual_min_distance_um=safe_float(residual_distance, 0.15),
         residual_min_area_frac=safe_float(residual_area, 5.0) / 100.0,
@@ -700,6 +722,11 @@ def _render_sidebar() -> Tuple[
         max_fwhm_second_peak_um=safe_float(max_fwhm_second, 0.25),
         min_compactness_second_peak=safe_float(min_compactness, 0.0),
         min_prominence_second_peak_sigma=safe_float(min_prominence_sigma, 0.0),
+        use_overlap_deconvolution=bool(use_overlap_deconvolution),
+        overlap_cell_shift_fraction=safe_float(overlap_cell_shift, 12.0) / 100.0,
+        overlap_max_ib_fwhm_um=safe_float(overlap_max_ib_fwhm, 0.35),
+        overlap_max_cell_fwhm_um=safe_float(overlap_max_cell_fwhm, 0.30),
+        overlap_min_area_frac=safe_float(overlap_min_area, 3.0) / 100.0,
     )
     return (
         options,
@@ -779,6 +806,7 @@ def _analyze_uploads(
                                     max_peak_fwhm_um=options.max_peak_fwhm_um,
                                     fit_weight_power=options.fit_weight_power,
                                     fit_weight_offset=options.fit_weight_offset,
+                                    force_single_peak=options.force_single_peak,
                                     # Gated 2-peak parameters
                                     use_gated_two_peak=options.use_gated_two_peak,
                                     residual_prominence_sigma=options.residual_prominence_sigma,
@@ -792,15 +820,22 @@ def _analyze_uploads(
                                     max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
                                     min_compactness_second_peak=options.min_compactness_second_peak,
                                     min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
+                                    use_overlap_deconvolution=options.use_overlap_deconvolution,
+                                    overlap_cell_shift_fraction=options.overlap_cell_shift_fraction,
+                                    overlap_max_ib_fwhm_um=options.overlap_max_ib_fwhm_um,
+                                    overlap_max_cell_fwhm_um=options.overlap_max_cell_fwhm_um,
+                                    overlap_min_area_frac=options.overlap_min_area_frac,
                                 ),
                             )
-                            if result.fit_kind == "two":
+                            if result.fit_kind in ("two", "overlap"):
                                 intact_fraction = safe_float(
                                     result.metrics.get("intact_fraction"), 0.0
                                 )
-                                if model_ib == "gennormal":
+                                if result.fit_kind != "overlap" and model_ib == "gennormal":
                                     continue
                                 if (
+                                    result.fit_kind != "overlap"
+                                    and
                                     model_cell == "gennormal"
                                     and intact_fraction < 0.15
                                 ):
@@ -842,6 +877,7 @@ def _analyze_uploads(
                         max_peak_fwhm_um=options.max_peak_fwhm_um,
                         fit_weight_power=options.fit_weight_power,
                         fit_weight_offset=options.fit_weight_offset,
+                        force_single_peak=options.force_single_peak,
                         # Gated 2-peak parameters
                         use_gated_two_peak=options.use_gated_two_peak,
                         residual_prominence_sigma=options.residual_prominence_sigma,
@@ -855,6 +891,11 @@ def _analyze_uploads(
                         max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
                         min_compactness_second_peak=options.min_compactness_second_peak,
                         min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
+                        use_overlap_deconvolution=options.use_overlap_deconvolution,
+                        overlap_cell_shift_fraction=options.overlap_cell_shift_fraction,
+                        overlap_max_ib_fwhm_um=options.overlap_max_ib_fwhm_um,
+                        overlap_max_cell_fwhm_um=options.overlap_max_cell_fwhm_um,
+                        overlap_min_area_frac=options.overlap_min_area_frac,
                     )
                 else:
                     actual_options = AnalysisOptions(
@@ -866,6 +907,7 @@ def _analyze_uploads(
                         max_peak_fwhm_um=options.max_peak_fwhm_um,
                         fit_weight_power=options.fit_weight_power,
                         fit_weight_offset=options.fit_weight_offset,
+                        force_single_peak=options.force_single_peak,
                         # Gated 2-peak parameters
                         use_gated_two_peak=options.use_gated_two_peak,
                         residual_prominence_sigma=options.residual_prominence_sigma,
@@ -879,6 +921,11 @@ def _analyze_uploads(
                         max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
                         min_compactness_second_peak=options.min_compactness_second_peak,
                         min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
+                        use_overlap_deconvolution=options.use_overlap_deconvolution,
+                        overlap_cell_shift_fraction=options.overlap_cell_shift_fraction,
+                        overlap_max_ib_fwhm_um=options.overlap_max_ib_fwhm_um,
+                        overlap_max_cell_fwhm_um=options.overlap_max_cell_fwhm_um,
+                        overlap_min_area_frac=options.overlap_min_area_frac,
                     )
                 analysis = analyze_measurement(measurement, actual_options)
 
@@ -898,6 +945,12 @@ def _fit_residual_score(result: AnalysisResult) -> float:
     return (max_abs / peak_height) + 0.25 * (mean_abs / peak_height)
 
 
+def _cell_component_label(analysis: AnalysisResult) -> str:
+    if analysis.fit_kind == "overlap":
+        return "Cells (overlap fit)"
+    return "Cells"
+
+
 def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
     """Show a compact status band for the selected analysis run."""
     if not entries:
@@ -909,13 +962,20 @@ def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
         for _, analysis in entries
     ]
     two_peak_count = sum(1 for _, analysis in entries if analysis.fit_kind == "two")
+    overlap_count = sum(
+        1 for _, analysis in entries if analysis.fit_kind == "overlap"
+    )
     low_quality_count = sum(1 for value in r_squared_values if value < 0.90)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Selected traces", len(entries))
     with col2:
-        st.metric("Two-peak fits", f"{two_peak_count}/{len(entries)}")
+        st.metric(
+            "2-peak fits",
+            f"{two_peak_count + overlap_count}/{len(entries)}",
+            delta=f"{overlap_count} overlap" if overlap_count else None,
+        )
     with col3:
         mean_lysis = sum(lysis_values) / max(len(lysis_values), 1)
         st.metric("Mean lysis efficiency", f"{mean_lysis:.1%}")
@@ -1036,7 +1096,7 @@ def _render_fit_overview(
                     go.Scatter(
                         x=analysis.dense_fit["particle_size_um"],
                         y=analysis.dense_fit["cells_component_ug"],
-                        name="Cells",
+                        name=_cell_component_label(analysis),
                         mode="lines",
                         line=dict(color=color, width=2),
                         legendgroup=group_name,
@@ -1151,7 +1211,7 @@ def _render_plot(
                     go.Scatter(
                         x=analysis.dense_fit["particle_size_um"],
                         y=analysis.dense_fit["cells_component_ug"],
-                        name="Cells",
+                        name=_cell_component_label(analysis),
                         mode="lines",
                         line=dict(color=color, width=1.5),
                         legendgroup=group_name,
@@ -1503,7 +1563,7 @@ def _create_individual_sample_plot(
                         go.Scatter(
                             x=analysis.dense_fit["particle_size_um"],
                             y=analysis.dense_fit["cells_component_ug"],
-                            name="Cells",
+                            name=_cell_component_label(analysis),
                             mode="lines",
                             line=dict(color=color, width=1.5),
                         )
@@ -1547,7 +1607,7 @@ def _create_individual_sample_plot(
                         go.Scatter(
                             x=analysis.dense_fit["particle_size_um"],
                             y=analysis.dense_fit["cells_component_ug"],
-                            name="Cells",
+                            name=_cell_component_label(analysis),
                             mode="lines",
                             line=dict(color=color, width=1.5),
                         )
