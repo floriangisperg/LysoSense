@@ -49,6 +49,18 @@ def safe_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
 
+
+def _has_normalized_entries(entries: Sequence[Tuple[str, AnalysisResult]]) -> bool:
+    return any(
+        analysis.measurement.metadata.get("normalized", False)
+        for _, analysis in entries
+    )
+
+
+def _signal_yaxis_title(entries: Sequence[Tuple[str, AnalysisResult]]) -> str:
+    return "Rel Weight" if _has_normalized_entries(entries) else "D * Wd (µg)"
+
+
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
@@ -112,12 +124,11 @@ def main() -> None:
     _render_run_summary(active_results)
 
     # Create tab interface
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tab1, tab2, tab3, tab4 = st.tabs(
         [
             "📊 Overview",
             "🔍 Individual Samples",
             "📈 Results Table",
-            "Fit Diagnostics",
             "ℹ️ Detailed Information",
         ]
     )
@@ -134,9 +145,6 @@ def main() -> None:
         summary_df = _render_results_tab(active_results)
 
     with tab4:
-        _render_diagnostics_tab(active_results)
-
-    with tab5:
         _render_details_tab(active_results)
 
     # Download buttons stay at bottom
@@ -924,79 +932,8 @@ def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
     if low_quality_count:
         st.warning(
             f"{low_quality_count} selected trace(s) have R² below 0.90. "
-            "Review the Fit Diagnostics tab before interpreting those results."
+            "Review the individual sample plots before interpreting those results."
         )
-
-
-def _build_residual_stats(
-    entries: Sequence[Tuple[str, AnalysisResult]],
-) -> pd.DataFrame:
-    """Build per-sample fit residual diagnostics."""
-    records: List[Dict[str, float | str]] = []
-    for label, analysis in entries:
-        observed = analysis.observed
-        residual = observed["mass_signal_ug"] - observed["fit_signal_ug"]
-        abs_residual = residual.abs()
-        signal_range = (
-            observed["mass_signal_ug"].max() - observed["mass_signal_ug"].min()
-        )
-        rmse = safe_float((residual.pow(2).mean()) ** 0.5)
-        max_abs = safe_float(abs_residual.max())
-        normalized_rmse = rmse / max(safe_float(signal_range), 1e-12)
-
-        records.append(
-            {
-                "measurement": label,
-                "fit_kind": analysis.fit_kind,
-                "model": str(analysis.metrics.get("model", "")),
-                "r_squared": calculate_r_squared(analysis),
-                "rmse": rmse,
-                "normalized_rmse": normalized_rmse,
-                "max_abs_residual": max_abs,
-                "mean_residual": safe_float(residual.mean()),
-            }
-        )
-
-    return pd.DataFrame(records)
-
-
-def _render_residual_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
-    fig = go.Figure()
-    colors = [
-        "#1f77b4",
-        "#ff7f0e",
-        "#2ca02c",
-        "#d62728",
-        "#9467bd",
-        "#8c564b",
-        "#e377c2",
-        "#7f7f7f",
-        "#bcbd22",
-        "#17becf",
-    ]
-
-    for i, (label, analysis) in enumerate(entries):
-        observed = analysis.observed
-        residual = observed["mass_signal_ug"] - observed["fit_signal_ug"]
-        fig.add_trace(
-            go.Scatter(
-                x=observed["particle_size_um"],
-                y=residual,
-                name=label.replace(".dat", ""),
-                mode="lines",
-                line=dict(color=colors[i % len(colors)], width=1.8),
-            )
-        )
-
-    fig.add_hline(y=0, line_dash="dash", line_color="#666666", line_width=1)
-    fig.update_layout(
-        xaxis_title="Particle size (µm)",
-        yaxis_title="Residual (observed - fit)",
-        template="plotly_white",
-        margin=dict(l=40, r=10, t=20, b=40),
-        legend_title="Sample",
-    )
-    st.plotly_chart(fig, width="stretch")
 
 
 def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
@@ -1036,7 +973,7 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
 
     fig.update_layout(
         xaxis_title="Particle size (µm)",
-        yaxis_title="D * Wd (µg)",
+        yaxis_title=_signal_yaxis_title(entries),
         legend_title="Sample",
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
@@ -1128,7 +1065,7 @@ def _render_fit_overview(
 
     fig.update_layout(
         xaxis_title="Particle size (µm)",
-        yaxis_title="D * Wd (µg)",
+        yaxis_title=_signal_yaxis_title(entries),
         legend_title="Samples & Components",
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
@@ -1241,7 +1178,7 @@ def _render_plot(
 
     fig.update_layout(
         xaxis_title="Particle size (µm)",
-        yaxis_title="D * Wd (µg)",
+        yaxis_title=_signal_yaxis_title(entries),
         legend_title="Samples & Trace Types",
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
@@ -1634,7 +1571,7 @@ def _create_individual_sample_plot(
 
     fig.update_layout(
         xaxis_title="Particle size (µm)",
-        yaxis_title="D * Wd (µg)",
+        yaxis_title=_signal_yaxis_title(entries),
         template="plotly_white",
         margin=dict(l=40, r=10, t=20, b=40),  # Reduced top margin since no title
         height=300,  # Compact height for grid layout
@@ -1655,25 +1592,6 @@ def _render_results_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.Dat
 
     summary_df = _render_metrics(entries)
     return summary_df
-
-
-def _render_diagnostics_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
-    """Render residual diagnostics for fitted traces."""
-    st.markdown("### Fit Diagnostics")
-    st.markdown("Residuals and error metrics for the selected samples.")
-
-    _render_residual_plot(entries)
-
-    diagnostics = _build_residual_stats(entries)
-    if diagnostics.empty:
-        st.info("No diagnostic data available.")
-        return
-
-    st.dataframe(
-        diagnostics,
-        hide_index=True,
-        width="stretch",
-    )
 
 
 def _render_details_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:

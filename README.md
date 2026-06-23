@@ -5,6 +5,7 @@ LysoSense provides a reproducible workflow for analyzing differential centrifuga
 ### Use the Web App
 - Open the hosted app: [lysosense.streamlit.app](https://lysosense.streamlit.app/)
 - Upload one or more CPS `.dat` files, inspect overlays and component fits, and download the XLSX summary.
+- User guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 
 ### Features
 - Parse CPS/DCS `.dat` exports into `particle_size_um` vs `mass_signal_ug`
