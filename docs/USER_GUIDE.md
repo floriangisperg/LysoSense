@@ -110,10 +110,6 @@ Summary of the main metrics:
 - `mean_ib_µm`: mean size of the IB peak.
 - `r_squared`: fit quality. Values close to `1` indicate better agreement.
 
-**Fit Diagnostics**
-
-Shows residuals and error metrics. Large systematic residuals may indicate that the peak shape is not described well enough or that a second peak is missing.
-
 **Details**
 
 Shows metadata and the first data points of the analyzed traces.
@@ -140,6 +136,6 @@ For most homogenisation datasets:
 
 ## 9. Limitations
 
-LysoSense provides reproducible peak modeling, not a perfect reconstruction of every measured trace. Real CPS/DCS peaks can be asymmetric, overlapping, or slightly deformed. Metrics should therefore be interpreted together with the plot and fit diagnostics.
+LysoSense provides reproducible peak modeling, not a perfect reconstruction of every measured trace. Real CPS/DCS peaks can be asymmetric, overlapping, or slightly deformed. Metrics should therefore be interpreted together with the fitted plots.
 
 For trend analysis and downstream modeling, it is important to use consistent settings across comparable samples.

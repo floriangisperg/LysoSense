@@ -541,38 +541,32 @@ def _render_sidebar() -> Tuple[
 
         # Quick actions section
         with st.sidebar.expander("⚡ Quick Actions", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔄 Reset All", help="Reset all settings to defaults"):
-                    # Clear all widget state to reset to defaults
-                    for key in list(st.session_state.keys()):
-                        if isinstance(key, str) and key.startswith(
-                            (
-                                "view_mode",
-                                "model",
-                                "autofit",
-                                "mu_ib",
-                                "mu_cell",
-                                "allow_shift",
-                                "second_peak",
-                                "limit_peak_width",
-                                "max_peak_width",
-                                "fit_weight_power",
-                                "show_fit",
-                                "show_components",
-                                "baseline_subtraction",
-                                "baseline_method",
-                                "limit_size_range",
-                                "size_min_um",
-                                "size_max_um",
-                            )
-                        ):
-                            del st.session_state[key]
-                    st.rerun()
-
-            with col2:
-                if st.button("💾 Save Config", help="Save current configuration"):
-                    st.info("Configuration saved (feature coming soon)")
+            if st.button("🔄 Reset All", help="Reset all settings to defaults"):
+                # Clear all widget state to reset to defaults
+                for key in list(st.session_state.keys()):
+                    if isinstance(key, str) and key.startswith(
+                        (
+                            "view_mode",
+                            "model",
+                            "autofit",
+                            "mu_ib",
+                            "mu_cell",
+                            "allow_shift",
+                            "second_peak",
+                            "limit_peak_width",
+                            "max_peak_width",
+                            "fit_weight_power",
+                            "show_fit",
+                            "show_components",
+                            "baseline_subtraction",
+                            "baseline_method",
+                            "limit_size_range",
+                            "size_min_um",
+                            "size_max_um",
+                        )
+                    ):
+                        del st.session_state[key]
+                st.rerun()
     else:
         # Return defaults when no files uploaded
         model = "autofit"
