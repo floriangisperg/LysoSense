@@ -176,7 +176,7 @@ def _render_sidebar() -> Tuple[
             baseline_subtraction = st.checkbox(
                 "Baseline subtraction",
                 value=False,
-                help="Subtract baseline from raw data before fitting",
+                help="Subtract baseline from raw data before fitting. Usually not necessary.",
                 key="baseline_subtraction",
             )
 
@@ -234,126 +234,6 @@ def _render_sidebar() -> Tuple[
 
         # Model settings section
         with st.sidebar.expander("⚙️ Model Settings", expanded=True):
-            model_options = (
-                "gaussian",
-                "lognormal",
-                "splitgaussian",
-                "gennormal",
-                "autofit",
-            )
-            default_model = st.session_state.get("model", "autofit")
-            default_index = (
-                model_options.index(default_model)
-                if default_model in model_options
-                else 0
-            )
-            model = st.radio(
-                "Peak model",
-                model_options,
-                index=default_index,
-                key="model",
-            )
-            compare_models = model == "autofit"
-
-            # Option to use different models per peak
-            use_mixed_models = st.checkbox(
-                "Use different models per peak",
-                value=st.session_state.get("use_mixed_models", False),
-                key="use_mixed_models",
-                disabled=compare_models,
-                help="Fit IB and cell peaks with different model types (autofit does this automatically)",
-            )
-
-            if use_mixed_models and not compare_models:
-                st.markdown("**Model per peak:**")
-                single_model_options = (
-                    "gaussian",
-                    "lognormal",
-                    "splitgaussian",
-                    "gennormal",
-                )
-                st.selectbox(
-                    "IB peak model",
-                    single_model_options,
-                    index=single_model_options.index(model) if model in single_model_options else 0,
-                    key="model_ib",
-                )
-                st.selectbox(
-                    "Cell peak model",
-                    single_model_options,
-                    index=single_model_options.index(model) if model in single_model_options else 0,
-                    key="model_cell",
-                )
-            else:
-                pass
-
-            st.markdown("**Peak Parameters**")
-            mu_ib = st.number_input(
-                "IB target size (µm)",
-                value=0.48,
-                min_value=0.1,
-                max_value=2.0,
-                step=0.01,
-                key="mu_ib",
-            )
-            mu_cell = st.number_input(
-                "Cell target size (µm)",
-                value=0.85,
-                min_value=0.1,
-                max_value=3.0,
-                step=0.01,
-                key="mu_cell",
-            )
-
-            st.markdown("**Fitting Constraints**")
-            allow_shift = st.slider(
-                "Allowed peak shift (%)",
-                min_value=5,
-                max_value=40,
-                value=20,
-                step=1,
-                key="allow_shift",
-            )
-            second_peak_percent = (
-                st.slider(
-                    "Min 2nd peak fraction (%)",
-                    min_value=0.0,
-                    max_value=8.0,
-                    value=2.0,
-                    step=0.5,
-                    help="Minimum share of total area required to keep the cell peak.",
-                    key="second_peak",
-                )
-                / 100.0
-            )
-            limit_peak_width = st.checkbox(
-                "Limit max peak width",
-                value=True,
-                help="Apply a full-width-at-half-maximum (FWHM) cap to both peaks to avoid overly broad fits.",
-                key="limit_peak_width",
-            )
-            if limit_peak_width:
-                max_peak_width_value = st.slider(
-                    "Max peak width (um)",
-                    min_value=0.05,
-                    max_value=0.5,
-                    value=0.3,
-                    step=0.01,
-                    key="max_peak_width",
-                )
-            else:
-                max_peak_width_value = None
-
-            fit_weight_power = st.slider(
-                "Peak-top weighting",
-                min_value=0.0,
-                max_value=0.5,
-                value=0.2,
-                step=0.05,
-                help="Give higher-signal points more influence during fitting. 0 = ordinary least squares.",
-                key="fit_weight_power",
-            )
-
             st.markdown("**Peak Detection**")
             detection_modes = (
                 "Automatic",
@@ -380,13 +260,60 @@ def _render_sidebar() -> Tuple[
                 key="peak_detection_mode",
             )
 
-            with st.expander("Advanced peak settings", expanded=False):
+            st.markdown("**Peak Parameters**")
+            mu_ib = st.number_input(
+                "IB target size (µm)",
+                value=0.48,
+                min_value=0.1,
+                max_value=2.0,
+                step=0.01,
+                key="mu_ib",
+            )
+            mu_cell = st.number_input(
+                "Cell target size (µm)",
+                value=0.85,
+                min_value=0.1,
+                max_value=3.0,
+                step=0.01,
+                key="mu_cell",
+            )
+
+            model_options = (
+                "gaussian",
+                "lognormal",
+                "splitgaussian",
+                "gennormal",
+                "autofit",
+            )
+            default_model = st.session_state.get("model", "autofit")
+            default_index = (
+                model_options.index(default_model)
+                if default_model in model_options
+                else 0
+            )
+            model = st.radio(
+                "Peak model",
+                model_options,
+                index=default_index,
+                key="model",
+            )
+            compare_models = model == "autofit"
+
+            with st.expander("Advanced fitting settings", expanded=False):
                 sensitivity = st.select_slider(
                     "Sensitivity",
-                    options=["Low (strict)", "Medium (default)", "High (sensitive)", "Custom"],
+                    options=[
+                        "Low (strict)",
+                        "Medium (default)",
+                        "High (sensitive)",
+                        "Custom",
+                    ],
                     value="Medium (default)",
                     key="sensitivity",
-                    help="Low = fewer false positives, High = catch more 2-peaks. Select 'Custom' to adjust individual parameters.",
+                    help=(
+                        "Low = fewer false positives, High = catch more 2-peaks. "
+                        "Select 'Custom' to adjust individual parameters."
+                    ),
                 )
 
                 if sensitivity == "Custom":
@@ -518,6 +445,88 @@ def _render_sidebar() -> Tuple[
                     step=0.5,
                     help="Minimum fitted cell area needed to accept an overlap deconvolution.",
                     key="overlap_min_area",
+                )
+
+                st.markdown("**Model per peak**")
+                use_mixed_models = st.checkbox(
+                    "Use different models per peak",
+                    value=st.session_state.get("use_mixed_models", False),
+                    key="use_mixed_models",
+                    disabled=compare_models,
+                    help="Fit IB and cell peaks with different model types (autofit does this automatically)",
+                )
+
+                if use_mixed_models and not compare_models:
+                    single_model_options = (
+                        "gaussian",
+                        "lognormal",
+                        "splitgaussian",
+                        "gennormal",
+                    )
+                    st.selectbox(
+                        "IB peak model",
+                        single_model_options,
+                        index=single_model_options.index(model)
+                        if model in single_model_options
+                        else 0,
+                        key="model_ib",
+                    )
+                    st.selectbox(
+                        "Cell peak model",
+                        single_model_options,
+                        index=single_model_options.index(model)
+                        if model in single_model_options
+                        else 0,
+                        key="model_cell",
+                    )
+
+                st.markdown("**Fitting constraints**")
+                allow_shift = st.slider(
+                    "Allowed peak shift (%)",
+                    min_value=5,
+                    max_value=40,
+                    value=20,
+                    step=1,
+                    key="allow_shift",
+                )
+                second_peak_percent = (
+                    st.slider(
+                        "Min 2nd peak fraction (%)",
+                        min_value=0.0,
+                        max_value=8.0,
+                        value=2.0,
+                        step=0.5,
+                        help="Minimum share of total area required to keep the cell peak.",
+                        key="second_peak",
+                    )
+                    / 100.0
+                )
+                limit_peak_width = st.checkbox(
+                    "Limit max peak width",
+                    value=True,
+                    help="Apply a full-width-at-half-maximum (FWHM) cap to both peaks to avoid overly broad fits.",
+                    key="limit_peak_width",
+                )
+                if limit_peak_width:
+                    max_peak_width_value = st.slider(
+                        "Max peak width (um)",
+                        min_value=0.05,
+                        max_value=0.5,
+                        value=0.3,
+                        step=0.01,
+                        key="max_peak_width",
+                    )
+                else:
+                    max_peak_width_value = None
+
+                fit_weight_power = st.slider(
+                    "Peak-top weighting",
+                    min_value=0.0,
+                    max_value=0.5,
+                    value=0.2,
+                    step=0.05,
+                    help="Give higher-signal points more influence during fitting. 0 = ordinary least squares.",
+                    key="fit_weight_power",
                 )
 
         # Visualization section (merged with display options)
