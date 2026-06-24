@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import io
 import sys
+from dataclasses import fields, replace
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import plotly.graph_objects as go  # type: ignore[import-untyped]
@@ -763,185 +764,166 @@ def _analyze_uploads(
 ) -> List[Tuple[str, AnalysisResult]]:
     results: List[Tuple[str, AnalysisResult]] = []
     selected_model: str = str(st.session_state.get("model", "autofit"))
-    compare_models = selected_model == "autofit"
     baseline_subtraction = st.session_state.get("baseline_subtraction", False)
     baseline_method = st.session_state.get("baseline_method", "minimum")
+    use_mixed = st.session_state.get("use_mixed_models", False)
+    model_ib_val = st.session_state.get("model_ib")
+    model_cell_val = st.session_state.get("model_cell")
+    options_key = _analysis_options_cache_key(options)
 
     for file in uploaded_files:
         try:
-            measurement = parse_dat_bytes(file.getvalue(), source_name=file.name)
-            if limit_size_range and size_min_um < size_max_um:
-                measurement = clip_measurement_range(
-                    measurement, size_min_um, size_max_um
-                )
-
-            # Apply baseline subtraction if requested
-            if baseline_subtraction:
-                measurement = subtract_baseline(measurement, baseline_method)
-
-            # Apply normalization if requested
-            if normalize_data:
-                try:
-                    measurement = normalize_measurement(measurement)
-                except NormalizationSkipped as exc:
-                    st.warning(str(exc))
-
-            if compare_models:
-                # Autofit: try all model combinations and pick the best
-                model_types: list[str] = [
-                    "gaussian",
-                    "lognormal",
-                    "splitgaussian",
-                    "gennormal",
-                ]
-                best_r2 = -float("inf")
-                best_residual_score = float("inf")
-                best_result: AnalysisResult | None = None
-                r2_tie_tolerance = 5e-4
-
-                for model_ib in model_types:
-                    for model_cell in model_types:
-                        try:
-                            result = analyze_measurement(
-                                measurement,
-                                AnalysisOptions(
-                                    model="gaussian",  # base model (overridden by model_ib/cell)
-                                    model_ib=model_ib,  # type: ignore[arg-type]
-                                    model_cell=model_cell,  # type: ignore[arg-type]
-                                    mu_ib_um=options.mu_ib_um,
-                                    mu_cell_um=options.mu_cell_um,
-                                    allow_shift_fraction=options.allow_shift_fraction,
-                                    second_peak_min_frac=options.second_peak_min_frac,
-                                    max_peak_fwhm_um=options.max_peak_fwhm_um,
-                                    fit_weight_power=options.fit_weight_power,
-                                    fit_weight_offset=options.fit_weight_offset,
-                                    force_single_peak=options.force_single_peak,
-                                    # Gated 2-peak parameters
-                                    use_gated_two_peak=options.use_gated_two_peak,
-                                    residual_prominence_sigma=options.residual_prominence_sigma,
-                                    residual_min_distance_um=options.residual_min_distance_um,
-                                    residual_min_area_frac=options.residual_min_area_frac,
-                                    bic_improvement_threshold=options.bic_improvement_threshold,
-                                    local_dominance_threshold=options.local_dominance_threshold,
-                                    second_peak_area_threshold=options.second_peak_area_threshold,
-                                    min_separation_fwhm_ratio=options.min_separation_fwhm_ratio,
-                                    # Second peak quality constraints
-                                    max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
-                                    min_compactness_second_peak=options.min_compactness_second_peak,
-                                    min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
-                                    use_overlap_deconvolution=options.use_overlap_deconvolution,
-                                    overlap_cell_shift_fraction=options.overlap_cell_shift_fraction,
-                                    overlap_max_ib_fwhm_um=options.overlap_max_ib_fwhm_um,
-                                    overlap_max_cell_fwhm_um=options.overlap_max_cell_fwhm_um,
-                                    overlap_min_area_frac=options.overlap_min_area_frac,
-                                ),
-                            )
-                            if result.fit_kind in ("two", "overlap"):
-                                intact_fraction = safe_float(
-                                    result.metrics.get("intact_fraction"), 0.0
-                                )
-                                if result.fit_kind != "overlap" and model_ib == "gennormal":
-                                    continue
-                                if (
-                                    result.fit_kind != "overlap"
-                                    and
-                                    model_cell == "gennormal"
-                                    and intact_fraction < 0.15
-                                ):
-                                    continue
-                            r2 = calculate_r_squared(result)
-                            residual_score = _fit_residual_score(result)
-                            if r2 > best_r2 + r2_tie_tolerance or (
-                                abs(r2 - best_r2) <= r2_tie_tolerance
-                                and residual_score < best_residual_score
-                            ):
-                                best_r2 = r2
-                                best_residual_score = residual_score
-                                best_result = result
-                        except Exception:
-                            # Skip failed fits
-                            continue
-
-                if best_result is None:
-                    raise RuntimeError("All autofit attempts failed")
-                analysis = best_result
-            else:
-                # Use selected model (but not "autofit" since that's handled above)
-                actual_model = "gaussian" if selected_model == "autofit" else selected_model
-
-                # Check if mixed models are enabled
-                use_mixed = st.session_state.get("use_mixed_models", False)
-                model_ib_val = st.session_state.get("model_ib")
-                model_cell_val = st.session_state.get("model_cell")
-
-                if use_mixed and model_ib_val and model_cell_val:
-                    actual_options = AnalysisOptions(
-                        model=actual_model,  # type: ignore[arg-type]
-                        model_ib=model_ib_val,  # type: ignore[arg-type]
-                        model_cell=model_cell_val,  # type: ignore[arg-type]
-                        mu_ib_um=options.mu_ib_um,
-                        mu_cell_um=options.mu_cell_um,
-                        allow_shift_fraction=options.allow_shift_fraction,
-                        second_peak_min_frac=options.second_peak_min_frac,
-                        max_peak_fwhm_um=options.max_peak_fwhm_um,
-                        fit_weight_power=options.fit_weight_power,
-                        fit_weight_offset=options.fit_weight_offset,
-                        force_single_peak=options.force_single_peak,
-                        # Gated 2-peak parameters
-                        use_gated_two_peak=options.use_gated_two_peak,
-                        residual_prominence_sigma=options.residual_prominence_sigma,
-                        residual_min_distance_um=options.residual_min_distance_um,
-                        residual_min_area_frac=options.residual_min_area_frac,
-                        bic_improvement_threshold=options.bic_improvement_threshold,
-                        local_dominance_threshold=options.local_dominance_threshold,
-                        second_peak_area_threshold=options.second_peak_area_threshold,
-                        min_separation_fwhm_ratio=options.min_separation_fwhm_ratio,
-                        # Second peak quality constraints
-                        max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
-                        min_compactness_second_peak=options.min_compactness_second_peak,
-                        min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
-                        use_overlap_deconvolution=options.use_overlap_deconvolution,
-                        overlap_cell_shift_fraction=options.overlap_cell_shift_fraction,
-                        overlap_max_ib_fwhm_um=options.overlap_max_ib_fwhm_um,
-                        overlap_max_cell_fwhm_um=options.overlap_max_cell_fwhm_um,
-                        overlap_min_area_frac=options.overlap_min_area_frac,
-                    )
-                else:
-                    actual_options = AnalysisOptions(
-                        model=actual_model,  # type: ignore[arg-type]
-                        mu_ib_um=options.mu_ib_um,
-                        mu_cell_um=options.mu_cell_um,
-                        allow_shift_fraction=options.allow_shift_fraction,
-                        second_peak_min_frac=options.second_peak_min_frac,
-                        max_peak_fwhm_um=options.max_peak_fwhm_um,
-                        fit_weight_power=options.fit_weight_power,
-                        fit_weight_offset=options.fit_weight_offset,
-                        force_single_peak=options.force_single_peak,
-                        # Gated 2-peak parameters
-                        use_gated_two_peak=options.use_gated_two_peak,
-                        residual_prominence_sigma=options.residual_prominence_sigma,
-                        residual_min_distance_um=options.residual_min_distance_um,
-                        residual_min_area_frac=options.residual_min_area_frac,
-                        bic_improvement_threshold=options.bic_improvement_threshold,
-                        local_dominance_threshold=options.local_dominance_threshold,
-                        second_peak_area_threshold=options.second_peak_area_threshold,
-                        min_separation_fwhm_ratio=options.min_separation_fwhm_ratio,
-                        # Second peak quality constraints
-                        max_fwhm_second_peak_um=options.max_fwhm_second_peak_um,
-                        min_compactness_second_peak=options.min_compactness_second_peak,
-                        min_prominence_second_peak_sigma=options.min_prominence_second_peak_sigma,
-                        use_overlap_deconvolution=options.use_overlap_deconvolution,
-                        overlap_cell_shift_fraction=options.overlap_cell_shift_fraction,
-                        overlap_max_ib_fwhm_um=options.overlap_max_ib_fwhm_um,
-                        overlap_max_cell_fwhm_um=options.overlap_max_cell_fwhm_um,
-                        overlap_min_area_frac=options.overlap_min_area_frac,
-                    )
-                analysis = analyze_measurement(measurement, actual_options)
-
+            analysis, warning = _analyze_one_upload_cached(
+                file.getvalue(),
+                file.name,
+                options_key,
+                selected_model,
+                bool(baseline_subtraction),
+                str(baseline_method),
+                bool(normalize_data),
+                bool(limit_size_range),
+                float(size_min_um),
+                float(size_max_um),
+                bool(use_mixed),
+                model_ib_val,
+                model_cell_val,
+            )
+            if warning:
+                st.warning(warning)
             results.append((file.name, analysis))
         except Exception as exc:
             st.error(f"{file.name}: {exc}")
     return results
+
+
+AnalysisOptionsKey = Tuple[Tuple[str, Any], ...]
+
+
+def _analysis_options_cache_key(options: AnalysisOptions) -> AnalysisOptionsKey:
+    return tuple((field.name, getattr(options, field.name)) for field in fields(options))
+
+
+def _analysis_options_from_cache_key(key: AnalysisOptionsKey) -> AnalysisOptions:
+    return AnalysisOptions(**dict(key))
+
+
+@st.cache_data(show_spinner=False)
+def _analyze_one_upload_cached(
+    file_bytes: bytes,
+    source_name: str,
+    options_key: AnalysisOptionsKey,
+    selected_model: str,
+    baseline_subtraction: bool,
+    baseline_method: str,
+    normalize_data: bool,
+    limit_size_range: bool,
+    size_min_um: float,
+    size_max_um: float,
+    use_mixed: bool,
+    model_ib_val: Optional[str],
+    model_cell_val: Optional[str],
+) -> Tuple[AnalysisResult, Optional[str]]:
+    options = _analysis_options_from_cache_key(options_key)
+    measurement = parse_dat_bytes(file_bytes, source_name=source_name)
+    if limit_size_range and size_min_um < size_max_um:
+        measurement = clip_measurement_range(measurement, size_min_um, size_max_um)
+    if baseline_subtraction:
+        measurement = subtract_baseline(measurement, baseline_method)
+
+    warning: Optional[str] = None
+    if normalize_data:
+        try:
+            measurement = normalize_measurement(measurement)
+        except NormalizationSkipped as exc:
+            warning = str(exc)
+
+    analysis = _fit_measurement_from_ui_options(
+        measurement,
+        options,
+        selected_model,
+        use_mixed,
+        model_ib_val,
+        model_cell_val,
+    )
+    return analysis, warning
+
+
+def _fit_measurement_from_ui_options(
+    measurement: Any,
+    options: AnalysisOptions,
+    selected_model: str,
+    use_mixed: bool,
+    model_ib_val: Optional[str],
+    model_cell_val: Optional[str],
+) -> AnalysisResult:
+    if selected_model == "autofit":
+        model_types: list[str] = [
+            "gaussian",
+            "lognormal",
+            "splitgaussian",
+            "gennormal",
+        ]
+        best_r2 = -float("inf")
+        best_residual_score = float("inf")
+        best_result: AnalysisResult | None = None
+        r2_tie_tolerance = 5e-4
+
+        for model_ib in model_types:
+            for model_cell in model_types:
+                try:
+                    result = analyze_measurement(
+                        measurement,
+                        replace(
+                            options,
+                            model="gaussian",
+                            model_ib=model_ib,  # type: ignore[arg-type]
+                            model_cell=model_cell,  # type: ignore[arg-type]
+                        ),
+                    )
+                    if result.fit_kind in ("two", "overlap"):
+                        intact_fraction = safe_float(
+                            result.metrics.get("intact_fraction"), 0.0
+                        )
+                        if result.fit_kind != "overlap" and model_ib == "gennormal":
+                            continue
+                        if (
+                            result.fit_kind != "overlap"
+                            and model_cell == "gennormal"
+                            and intact_fraction < 0.15
+                        ):
+                            continue
+                    r2 = calculate_r_squared(result)
+                    residual_score = _fit_residual_score(result)
+                    if r2 > best_r2 + r2_tie_tolerance or (
+                        abs(r2 - best_r2) <= r2_tie_tolerance
+                            and residual_score < best_residual_score
+                    ):
+                        best_r2 = r2
+                        best_residual_score = residual_score
+                        best_result = result
+                except Exception:
+                    continue
+
+        if best_result is None:
+            raise RuntimeError("All autofit attempts failed")
+        return best_result
+
+    actual_model = "gaussian" if selected_model == "autofit" else selected_model
+    if use_mixed and model_ib_val and model_cell_val:
+        actual_options = replace(
+            options,
+            model=actual_model,  # type: ignore[arg-type]
+            model_ib=model_ib_val,  # type: ignore[arg-type]
+            model_cell=model_cell_val,  # type: ignore[arg-type]
+        )
+    else:
+        actual_options = replace(
+            options,
+            model=actual_model,  # type: ignore[arg-type]
+            model_ib=None,
+            model_cell=None,
+        )
+    return analyze_measurement(measurement, actual_options)
 
 
 def _fit_residual_score(result: AnalysisResult) -> float:
@@ -1319,6 +1301,7 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
         "normalized",
         "r_squared",
         "fit_quality",
+        "area_robustness",
         "area_cells",
         "area_inclusion_bodies",
         "area_total",

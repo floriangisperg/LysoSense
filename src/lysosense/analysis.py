@@ -2,8 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict, List, Literal, Tuple, Optional, TypedDict, cast
+from dataclasses import dataclass, replace
+from typing import (
+    Callable,
+    Dict,
+    List,
+    Literal,
+    NotRequired,
+    Tuple,
+    Optional,
+    TypedDict,
+    cast,
+)
 
 import numpy as np
 import pandas as pd
@@ -24,6 +34,13 @@ class _FitResult(TypedDict):
     model_ib: ModelType
     model_cell: ModelType
     single_component: Optional[Literal["ib", "cell"]]
+    overlap_cell_area_min: NotRequired[Optional[float]]
+    overlap_cell_area_max: NotRequired[Optional[float]]
+    overlap_cell_fraction_min: NotRequired[Optional[float]]
+    overlap_cell_fraction_max: NotRequired[Optional[float]]
+    overlap_cell_fraction_range: NotRequired[Optional[float]]
+    overlap_area_confidence: NotRequired[Optional[str]]
+    overlap_accepted_variants: NotRequired[Optional[int]]
 
 
 ModelType = Literal["gaussian", "lognormal", "splitgaussian", "gennormal"]
@@ -549,7 +566,7 @@ def _derive_metrics(
     intact_fraction = float(area_cells / area_total)
     lysis_eff = float(1.0 - intact_fraction)
 
-    return {
+    metrics: Dict[str, float | str | None] = {
         "model": opts.model,
         "fit_kind": fitres["kind"],
         "area_cells": area_cells,
@@ -560,6 +577,15 @@ def _derive_metrics(
         "mean_cell_µm": m_cell,
         "mean_ib_µm": m_ib,
     }
+    if fitres["kind"] == "overlap":
+        metrics.update(
+            {
+                "area_robustness": fitres.get("overlap_area_confidence"),
+            }
+        )
+    else:
+        metrics["area_robustness"] = None
+    return metrics
 
 
 def _fit_single_peak_candidate(
@@ -673,6 +699,44 @@ def _fit_overlap_deconvolution(
     model_1peak: ModelType,
     single_component: Literal["ib", "cell"],
 ) -> Optional[_FitResult]:
+    fitres = _fit_overlap_deconvolution_candidate(
+        x,
+        y,
+        opts,
+        hints,
+        popt_1peak,
+        bic_1peak,
+        model_1peak,
+        single_component,
+    )
+    if fitres is None:
+        return None
+
+    fitres.update(
+        _estimate_overlap_area_robustness(
+            x,
+            y,
+            opts,
+            hints,
+            popt_1peak,
+            bic_1peak,
+            model_1peak,
+            single_component,
+        )
+    )
+    return fitres
+
+
+def _fit_overlap_deconvolution_candidate(
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    hints: PeakHints,
+    popt_1peak: np.ndarray,
+    bic_1peak: float,
+    model_1peak: ModelType,
+    single_component: Literal["ib", "cell"],
+) -> Optional[_FitResult]:
     if not opts.use_overlap_deconvolution or single_component != "ib":
         return None
     if opts.mu_cell_um <= opts.mu_ib_um:
@@ -764,6 +828,113 @@ def _fit_overlap_deconvolution(
         "model_ib": model_ib,
         "model_cell": model_cell,
         "single_component": None,
+    }
+
+
+def _overlap_variant_options(opts: AnalysisOptions) -> List[AnalysisOptions]:
+    shift_values = sorted(
+        {
+            max(0.05, opts.overlap_cell_shift_fraction * 0.75),
+            opts.overlap_cell_shift_fraction,
+            min(0.25, opts.overlap_cell_shift_fraction * 1.25),
+        }
+    )
+    ib_width_values = sorted(
+        {
+            max(0.12, opts.overlap_max_ib_fwhm_um * 0.85),
+            opts.overlap_max_ib_fwhm_um,
+            min(0.55, opts.overlap_max_ib_fwhm_um * 1.15),
+        }
+    )
+    cell_width_values = sorted(
+        {
+            max(0.08, opts.overlap_max_cell_fwhm_um * 0.80),
+            opts.overlap_max_cell_fwhm_um,
+            min(0.50, opts.overlap_max_cell_fwhm_um * 1.20),
+        }
+    )
+
+    variants: List[AnalysisOptions] = []
+    for shift in shift_values:
+        for ib_width in ib_width_values:
+            for cell_width in cell_width_values:
+                variants.append(
+                    replace(
+                        opts,
+                        overlap_cell_shift_fraction=shift,
+                        overlap_max_ib_fwhm_um=ib_width,
+                        overlap_max_cell_fwhm_um=cell_width,
+                    )
+                )
+    return variants
+
+
+def _estimate_overlap_area_robustness(
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    hints: PeakHints,
+    popt_1peak: np.ndarray,
+    bic_1peak: float,
+    model_1peak: ModelType,
+    single_component: Literal["ib", "cell"],
+) -> Dict[str, float | str | None]:
+    area_cells: List[float] = []
+    cell_fracs: List[float] = []
+
+    for variant_opts in _overlap_variant_options(opts):
+        fitres = _fit_overlap_deconvolution_candidate(
+            x,
+            y,
+            variant_opts,
+            hints,
+            popt_1peak,
+            bic_1peak,
+            model_1peak,
+            single_component,
+        )
+        if fitres is None:
+            continue
+
+        comp_ib, comp_cell = _component_arrays_raw(
+            x, fitres["popt"], fitres["model_ib"], fitres["model_cell"]
+        )
+        area_ib = float(np.trapezoid(comp_ib, x))
+        area_cell = float(np.trapezoid(comp_cell, x))
+        total_area = max(area_ib + area_cell, 1e-12)
+        area_cells.append(area_cell)
+        cell_fracs.append(area_cell / total_area)
+
+    if not cell_fracs:
+        return {
+            "overlap_cell_area_min": None,
+            "overlap_cell_area_max": None,
+            "overlap_cell_fraction_min": None,
+            "overlap_cell_fraction_max": None,
+            "overlap_cell_fraction_range": None,
+            "overlap_area_confidence": "uncertain",
+            "overlap_accepted_variants": 0,
+        }
+
+    frac_min = float(min(cell_fracs))
+    frac_max = float(max(cell_fracs))
+    frac_range = frac_max - frac_min
+    accepted_variants = len(cell_fracs)
+    if accepted_variants < 4 or frac_range > 0.15:
+        confidence = "uncertain"
+    elif frac_range > 0.07:
+        confidence = "moderate"
+    else:
+        confidence = "stable"
+
+    return {
+        "overlap_cell_area_min": float(min(area_cells)),
+        "overlap_cell_area_max": float(max(area_cells)),
+        "overlap_cell_fraction_min": frac_min,
+        "overlap_cell_fraction_max": frac_max,
+        "overlap_cell_fraction_range": frac_range,
+        "overlap_area_confidence": confidence,
+        "overlap_accepted_variants": accepted_variants,
     }
 
 

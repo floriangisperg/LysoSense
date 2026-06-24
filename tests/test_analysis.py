@@ -337,6 +337,11 @@ def test_overlap_deconvolution_fits_a_real_cell_peak():
     assert result.metrics[CELL_MEAN_KEY] is not None
     assert abs(result.metrics[CELL_MEAN_KEY] - 1.03) < 0.05
     assert result.metrics["area_cells"] > 0.0
+    assert result.metrics["area_robustness"] in {
+        "stable",
+        "moderate",
+        "uncertain",
+    }
 
 
 def test_tiny_secondary_component_is_rejected():
