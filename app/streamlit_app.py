@@ -38,6 +38,7 @@ from lysosense import (  # noqa: E402
     parse_dat_bytes,
     subtract_baseline,
 )
+from lysosense._version import CHANGELOG, __version__  # noqa: E402
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -64,6 +65,18 @@ def _signal_yaxis_title(entries: Sequence[Tuple[str, AnalysisResult]]) -> str:
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
+@st.dialog("✨ What's new in LysoSense")
+def whats_new_dialog() -> None:
+    """Show release notes; newest version first. ``__version__``/``CHANGELOG``
+    come from ``lysosense._version``, so this never needs manual syncing."""
+    st.caption(f"LysoSense v{__version__}")
+    for idx, (version, date, bullets) in enumerate(CHANGELOG):
+        st.markdown(f"**v{version}** — {date}")
+        st.markdown("\n".join(f"- {bullet}" for bullet in bullets))
+        if idx != len(CHANGELOG) - 1:
+            st.divider()
+
+
 def main() -> None:
     page_title = "LysoSense CPS Analyzer"
     st.set_page_config(page_title=page_title, layout="wide")
@@ -73,6 +86,7 @@ def main() -> None:
         "during homogenisation (method adapted from [Klausser et al., 2025](%s))."
         % ARTICLE_URL
     )
+    st.caption(f"LysoSense v{__version__}")
 
     (
         options,
@@ -753,6 +767,15 @@ def _render_sidebar() -> Tuple[
         overlap_min_area_frac=safe_float(overlap_min_area, 3.0) / 100.0,
         relax_peak_widths=bool(st.session_state.get("relax_widths", False)),
     )
+    # Version footer + release notes — always shown, independent of uploads.
+    st.sidebar.markdown("---")
+    if st.sidebar.button(
+        "✨ What's new?",
+        key="whats_new",
+        help="See recent changes and the current app version.",
+    ):
+        whats_new_dialog()
+
     return (
         options,
         show_fit,
@@ -1392,7 +1415,7 @@ def _render_download(summary_df: pd.DataFrame) -> None:
     st.download_button(
         "Download summary (XLSX)",
         data=buffer.getvalue(),
-        file_name="lysosense_summary.xlsx",
+        file_name=f"lysosense_summary_v{__version__}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -1430,7 +1453,7 @@ def _render_experimental_data_download(
     st.download_button(
         "Download experimental data (XLSX)",
         data=buffer.getvalue(),
-        file_name="lysosense_experimental_data.xlsx",
+        file_name=f"lysosense_experimental_data_v{__version__}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="Download an Excel file with each sample as a separate sheet, containing original data and fitted values.",
     )

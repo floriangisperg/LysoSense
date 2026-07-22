@@ -6,6 +6,7 @@ from E. coli homogenization campaigns.
 
 from __future__ import annotations
 
+from ._version import __version__
 from .io import Measurement, list_dat_files, load_dat_file, parse_dat_bytes
 from .analysis import AnalysisOptions, AnalysisResult, analyze_measurement
 from .transforms import (
@@ -17,6 +18,7 @@ from .transforms import (
 )
 
 __all__ = [
+    "__version__",
     "Measurement",
     "AnalysisOptions",
     "AnalysisResult",
