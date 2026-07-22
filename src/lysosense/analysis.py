@@ -122,6 +122,17 @@ class AnalysisOptions:
     overlap_min_r2_gain: float = 0.02
     overlap_min_shoulder_rss_reduction: float = 0.20
 
+    # --- Width relaxation for broad / overlapping peaks ---
+    # When True, the fit first runs with the normal (tight) width bounds; if the
+    # resulting R^2 is below ``width_relax_min_r2`` it re-runs with the per-peak
+    # sigma hint clamp and the FWHM caps relaxed, and keeps whichever fit scores
+    # higher. Lets genuinely broad shoulder peaks (common on instruments whose
+    # size calibration differs from the defaults) be fit instead of pinned into a
+    # narrow spike. Default off so existing behaviour is unchanged.
+    relax_peak_widths: bool = False
+    width_relax_min_r2: float = 0.92
+    width_relax_r2_margin: float = 0.02
+
     def get_model_ib(self) -> ModelType:
         return self.model_ib if self.model_ib else self.model
 
@@ -949,6 +960,44 @@ def _r_squared(y: np.ndarray, y_fit: np.ndarray) -> float:
 def _fit_curve(
     x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
 ) -> _FitResult:
+    """Fit the curve, with an optional width-relaxation fallback.
+
+    With ``opts.relax_peak_widths`` off this delegates straight to
+    :func:`_fit_curve_once` (the historical behaviour). With it on, it fits tight
+    first; if that R^2 is below ``opts.width_relax_min_r2`` it re-fits with the
+    per-peak sigma clamp and FWHM caps relaxed and returns whichever scores higher
+    (broad must beat tight by ``opts.width_relax_r2_margin``). This lets genuinely
+    broad shoulder peaks be fit instead of being pinned into a narrow spike, while
+    leaving clean traces (whose tight fit is already good) untouched.
+    """
+    if not opts.relax_peak_widths:
+        return _fit_curve_once(x, y, opts)
+
+    tight_opts = replace(opts, relax_peak_widths=False)
+    result_tight = _fit_curve_once(x, y, tight_opts)
+    r2_tight = _r_squared(y, _component_arrays(x, result_tight, tight_opts)[0])
+    if r2_tight >= opts.width_relax_min_r2:
+        return result_tight
+
+    broad_opts = replace(
+        opts,
+        relax_peak_widths=True,
+        max_fwhm_second_peak_um=max(opts.max_fwhm_second_peak_um or 0.0, 0.35),
+        max_peak_fwhm_um=max(opts.max_peak_fwhm_um or 0.0, 0.5),
+    )
+    try:
+        result_broad = _fit_curve_once(x, y, broad_opts)
+    except (RuntimeError, ValueError):
+        return result_tight
+    r2_broad = _r_squared(y, _component_arrays(x, result_broad, broad_opts)[0])
+    if r2_broad > r2_tight + opts.width_relax_r2_margin:
+        return result_broad
+    return result_tight
+
+
+def _fit_curve_once(
+    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+) -> _FitResult:
     if np.max(y) <= 0:
         raise ValueError("Signal trace contains no positive values to fit")
 
@@ -1369,12 +1418,18 @@ def _single_peak_bounds(
 
     max_sigma_cap = _sigma_cap_from_fwhm(fwhm_limit)
 
+    def _hint_bounds(sigma: float, defaults: Tuple[float, float]) -> Tuple[float, float]:
+        # When width relaxation is on, broaden rather than clamp around the hint.
+        if opts.relax_peak_widths:
+            return _broadened_sigma_bounds(sigma, defaults)
+        return _sigma_bounds_from_hint(sigma, defaults)
+
     if model_type == "lognormal":
         s_bounds = opts.s_bounds_logn_ib if is_ib else opts.s_bounds_logn_cells
         lo = [0, lo_mu, s_bounds[0]]
         hi = [np.inf, hi_mu, s_bounds[1]]
         if hint and not is_ib:
-            _, sigma_hi = _sigma_bounds_from_hint(
+            _, sigma_hi = _hint_bounds(
                 hint.sigma, opts.sigma_bounds_gauss_cells
             )
             hint_fwhm_cap = sigma_hi * 2.354820045
@@ -1393,10 +1448,10 @@ def _single_peak_bounds(
         sigma_left_lo, sigma_left_hi = left_bounds
         sigma_right_lo, sigma_right_hi = right_bounds
         if hint and not is_ib:
-            sigma_left_lo, sigma_left_hi = _sigma_bounds_from_hint(
+            sigma_left_lo, sigma_left_hi = _hint_bounds(
                 hint.sigma, left_bounds
             )
-            sigma_right_lo, sigma_right_hi = _sigma_bounds_from_hint(
+            sigma_right_lo, sigma_right_hi = _hint_bounds(
                 hint.sigma, right_bounds
             )
         if max_sigma_cap is not None:
@@ -1417,7 +1472,7 @@ def _single_peak_bounds(
         scale_lo, scale_hi = scale_bounds
         beta_lo, beta_hi = opts.gennormal_beta_bounds
         if hint and not is_ib:
-            _, sigma_hi = _sigma_bounds_from_hint(
+            _, sigma_hi = _hint_bounds(
                 hint.sigma, opts.sigma_bounds_gauss_cells
             )
             # Beta can flatten the peak top, so allow a little more scale than
@@ -1434,7 +1489,7 @@ def _single_peak_bounds(
         sigma_bounds = opts.sigma_bounds_gauss_ib if is_ib else opts.sigma_bounds_gauss_cells
         sigma_lo, sigma_hi = sigma_bounds
         if hint:
-            sigma_lo, sigma_hi = _sigma_bounds_from_hint(hint.sigma, sigma_bounds)
+            sigma_lo, sigma_hi = _hint_bounds(hint.sigma, sigma_bounds)
         if max_sigma_cap is not None:
             sigma_hi = min(sigma_hi, max_sigma_cap)
             if sigma_hi <= sigma_lo:
@@ -1627,6 +1682,26 @@ def _sigma_bounds_from_hint(
     hi = min(sigma * (1 + tolerance), hi_default)
     if hi <= lo:
         hi = lo * (1 + tolerance)
+    return lo, hi
+
+
+def _broadened_sigma_bounds(
+    sigma: float, defaults: Tuple[float, float]
+) -> Tuple[float, float]:
+    """Width bounds that let a peak broaden away from an unreliable hint.
+
+    Mirror of :func:`_sigma_bounds_from_hint` used when ``relax_peak_widths`` is on.
+    The hint's half-max width estimate is unreliable for shoulder peaks (it comes out
+    far too small), so instead of clamping sigma tightly around it we keep only an
+    anti-spike floor (0.7x the hint) and let sigma widen up to the real cap.
+    """
+    lo_default, hi_default = defaults
+    if sigma <= 0 or sigma < _MIN_RELIABLE_SIGMA:
+        return lo_default, hi_default
+    lo = max(sigma * 0.7, lo_default)
+    hi = hi_default
+    if hi <= lo:
+        hi = lo * 1.5
     return lo, hi
 
 

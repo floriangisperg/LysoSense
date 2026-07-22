@@ -438,3 +438,73 @@ def test_lysis_efficiency_bounded_in_unit_interval():
     metrics = analyze_measurement(_make_measurement(x, y, "two")).metrics
     assert 0.0 <= float(metrics["lysis_efficiency"]) <= 1.0
     assert 0.0 <= float(metrics["intact_fraction"]) <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Width relaxation (relax_peak_widths)
+# ---------------------------------------------------------------------------
+
+
+def test_relax_peak_widths_defaults_off():
+    """The width-relaxation toggle is off by default (existing behaviour preserved)."""
+
+    opts = AnalysisOptions()
+    assert opts.relax_peak_widths is False
+    assert opts.width_relax_min_r2 == pytest.approx(0.92)
+    assert opts.width_relax_r2_margin == pytest.approx(0.02)
+
+
+def test_broadened_sigma_bounds_allows_widening():
+    """The broadened hint bound keeps an anti-spike floor but widens the ceiling."""
+
+    from lysosense.analysis import _broadened_sigma_bounds
+
+    lo, hi = _broadened_sigma_bounds(0.03, (0.01, 0.25))
+    # Floor is 0.7x the (small) hint; ceiling is the real cap, not ±5% of the hint.
+    assert lo == pytest.approx(0.03 * 0.7, abs=1e-6)
+    assert hi == pytest.approx(0.25)
+    # A tiny / unreliable hint falls back to the defaults entirely.
+    assert _broadened_sigma_bounds(0.0, (0.01, 0.25)) == (0.01, 0.25)
+
+
+def test_relax_peak_widths_does_not_change_clean_fits():
+    """Relaxation never harms a clean fit: R^2 does not decrease and means stay close.
+
+    The noisy synthetic two-Gaussian sits near the R^2=0.92 trigger, so the broad pass
+    may fire and shift the result by a hair (it only wins when it improves R^2). The
+    guarantee we lock in here is do-no-harm: R^2 on >= R^2 off, same fit kind, and the
+    peak centres stay within a small tolerance.
+    """
+
+    x, y, _ = _two_peak_signal()
+    m = _make_measurement(x, y, "two")
+    off = analyze_measurement(m, AnalysisOptions(relax_peak_widths=False))
+    on = analyze_measurement(m, AnalysisOptions(relax_peak_widths=True))
+
+    assert calculate_r_squared(on) >= calculate_r_squared(off) - 1e-9
+    assert on.fit_kind == off.fit_kind
+    assert on.metrics[IB_MEAN_KEY] == pytest.approx(off.metrics[IB_MEAN_KEY], abs=0.01)
+    assert on.metrics[CELL_MEAN_KEY] == pytest.approx(off.metrics[CELL_MEAN_KEY], abs=0.01)
+
+
+def test_relax_peak_widths_recovers_broad_shoulder_peak():
+    """A broad IB shoulder the tight hint would pin narrow is recovered when relaxed.
+
+    Mirrors the real HMS/HPH failure: a broad IB peak (sigma ~0.12) sitting under a
+    dominant cell peak, where the standard hint-based width clamp pins the IB peak
+    into a narrow spike and the fit undershoots the data. With relaxation on the fit
+    scores materially higher R^2 and still recovers the IB centre.
+    """
+
+    x = np.linspace(0.2, 1.4, 700)
+    y = _gaussian(x, 6.0, 0.70, 0.12)  # broad IB shoulder
+    y += _gaussian(x, 20.0, 1.00, 0.08)  # dominant cell peak
+    m = _make_measurement(x, y, "broad-shoulder")
+    opts = {"mu_ib_um": 0.70, "mu_cell_um": 1.00}
+
+    off = analyze_measurement(m, AnalysisOptions(relax_peak_widths=False, **opts))
+    on = analyze_measurement(m, AnalysisOptions(relax_peak_widths=True, **opts))
+
+    assert calculate_r_squared(on) > calculate_r_squared(off) + 0.02
+    assert on.metrics[IB_MEAN_KEY] is not None
+    assert abs(on.metrics[IB_MEAN_KEY] - 0.70) < 0.05

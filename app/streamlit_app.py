@@ -279,6 +279,20 @@ def _render_sidebar() -> Tuple[
                 key="mu_cell",
             )
 
+            st.checkbox(
+                "Relax peak-width constraints (broad / overlapping peaks)",
+                value=False,
+                key="relax_widths",
+                help=(
+                    "Off (default): use the standard tight peak-width bounds. "
+                    "Turn this on for instruments/data where peaks sit broader than "
+                    "the defaults expect (typical symptom: the fit is sharper/narrower "
+                    "than the data and R² is poor). When on, a tight fit is tried first "
+                    "and the widths are only relaxed if that fit scores below R²=0.92, "
+                    "so clean traces are left unchanged."
+                ),
+            )
+
             model_options = (
                 "gaussian",
                 "lognormal",
@@ -737,6 +751,7 @@ def _render_sidebar() -> Tuple[
         overlap_max_ib_fwhm_um=safe_float(overlap_max_ib_fwhm, 0.35),
         overlap_max_cell_fwhm_um=safe_float(overlap_max_cell_fwhm, 0.30),
         overlap_min_area_frac=safe_float(overlap_min_area, 3.0) / 100.0,
+        relax_peak_widths=bool(st.session_state.get("relax_widths", False)),
     )
     return (
         options,
