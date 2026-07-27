@@ -62,6 +62,17 @@ def _signal_yaxis_title(entries: Sequence[Tuple[str, AnalysisResult]]) -> str:
     return "Rel Weight" if _has_normalized_entries(entries) else "D * Wd (µg)"
 
 
+def _apply_size_axis_scale(fig: go.Figure, log_size_axis: bool) -> None:
+    """Switch the particle-size x-axis to logarithmic.
+
+    Display only — the fit and lysis metrics are computed in linear µm and are
+    unaffected. Any non-positive sizes (rare in CPS/DCS exports) are dropped by
+    Plotly on a log axis rather than rendered.
+    """
+    if log_size_axis:
+        fig.update_xaxes(type="log")
+
+
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 
 
@@ -100,6 +111,7 @@ def main() -> None:
         limit_size_range,
         size_min_um,
         size_max_um,
+        log_size_axis,
         uploaded_files,
     ) = _render_sidebar()
 
@@ -148,11 +160,13 @@ def main() -> None:
     )
 
     with tab1:
-        _render_overview_tab(active_results, show_fit, show_components, view_mode)
+        _render_overview_tab(
+            active_results, show_fit, show_components, view_mode, log_size_axis
+        )
 
     with tab2:
         _render_individual_samples_tab(
-            active_results, show_fit, show_components, view_mode
+            active_results, show_fit, show_components, view_mode, log_size_axis
         )
 
     with tab3:
@@ -172,7 +186,7 @@ def main() -> None:
 
 
 def _render_sidebar() -> Tuple[
-    AnalysisOptions, bool, bool, str, bool, bool, str, bool, bool, float, float, List[Any]
+    AnalysisOptions, bool, bool, str, bool, bool, str, bool, bool, float, float, bool, List[Any]
 ]:
     # Data upload section (always expanded)
     with st.sidebar.expander("📁 Data Upload", expanded=True):
@@ -572,6 +586,15 @@ def _render_sidebar() -> Tuple[
             show_components = st.checkbox(
                 "Show component contributions", value=True, key="show_components"
             )
+            log_size_axis = st.checkbox(
+                "Log particle-size axis",
+                value=False,
+                key="log_size_axis",
+                help=(
+                    "Display only — switch the size axis to logarithmic. "
+                    "The fit and lysis% are computed in linear space and are unaffected."
+                ),
+            )
 
         # Quick actions section
         with st.sidebar.expander("⚡ Quick Actions", expanded=False):
@@ -592,6 +615,7 @@ def _render_sidebar() -> Tuple[
                             "fit_weight_power",
                             "show_fit",
                             "show_components",
+                            "log_size_axis",
                             "baseline_subtraction",
                             "baseline_method",
                             "limit_size_range",
@@ -630,6 +654,7 @@ def _render_sidebar() -> Tuple[
         fit_weight_power = 0.2
         show_fit = True
         show_components = True
+        log_size_axis = False
         baseline_subtraction = False
         baseline_method = "minimum"
         view_mode = "Combined"
@@ -788,6 +813,7 @@ def _render_sidebar() -> Tuple[
         bool(limit_size_range),
         safe_float(size_min_um, 0.2) or 0.2,
         safe_float(size_max_um, 1.2) or 1.2,
+        log_size_axis,
         uploaded_files,
     )
 
@@ -1019,7 +1045,9 @@ def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
         )
 
 
-def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
+def _render_raw_data_plot(
+    entries: Sequence[Tuple[str, AnalysisResult]], log_size_axis: bool = False
+) -> None:
     """Plot only raw data traces with distinct colors per sample."""
     fig = go.Figure()
 
@@ -1061,6 +1089,7 @@ def _render_raw_data_plot(entries: Sequence[Tuple[str, AnalysisResult]]) -> None
         template="plotly_white",
         margin=dict(l=40, r=10, t=40, b=40),
     )
+    _apply_size_axis_scale(fig, log_size_axis)
     # Check if any samples are normalized
     normalized_samples = [
         label
@@ -1080,6 +1109,7 @@ def _render_fit_overview(
     entries: Sequence[Tuple[str, AnalysisResult]],
     show_fit: bool,
     show_components: bool,
+    log_size_axis: bool = False,
 ) -> None:
     """Organized plot showing only fitted data with sample-specific colors and grouped legends."""
     fig = go.Figure()
@@ -1159,6 +1189,7 @@ def _render_fit_overview(
             bordercolor="rgba(0,0,0,0)",
         ),
     )
+    _apply_size_axis_scale(fig, log_size_axis)
 
     # Add legend guide
     st.markdown(
@@ -1184,6 +1215,7 @@ def _render_plot(
     entries: Sequence[Tuple[str, AnalysisResult]],
     show_fit: bool,
     show_components: bool,
+    log_size_axis: bool = False,
 ) -> None:
     """Combined plot with grouped legends for better organization."""
     fig = go.Figure()
@@ -1272,6 +1304,7 @@ def _render_plot(
             bordercolor="rgba(0,0,0,0)",
         ),
     )
+    _apply_size_axis_scale(fig, log_size_axis)
 
     # Add legend guide
     st.markdown(
@@ -1491,6 +1524,7 @@ def _render_overview_tab(
     show_fit: bool,
     show_components: bool,
     view_mode: str,
+    log_size_axis: bool = False,
 ) -> None:
     """Render the Overview tab with combined plots."""
     st.markdown("### Combined Analysis Overview")
@@ -1498,11 +1532,11 @@ def _render_overview_tab(
 
     # Render based on view mode
     if view_mode == "Raw Data Only":
-        _render_raw_data_plot(entries)
+        _render_raw_data_plot(entries, log_size_axis)
     elif view_mode == "Fit Overview":
-        _render_fit_overview(entries, show_fit, show_components)
+        _render_fit_overview(entries, show_fit, show_components, log_size_axis)
     else:  # Combined view (original)
-        _render_plot(entries, show_fit, show_components)
+        _render_plot(entries, show_fit, show_components, log_size_axis)
 
 
 def _render_individual_samples_tab(
@@ -1510,6 +1544,7 @@ def _render_individual_samples_tab(
     show_fit: bool,
     show_components: bool,
     view_mode: str,
+    log_size_axis: bool = False,
 ) -> None:
     """Render individual samples in a grid layout."""
     st.markdown("### Individual Sample Analysis")
@@ -1543,6 +1578,7 @@ def _render_individual_samples_tab(
                         show_components,
                         view_mode,
                         sample_name,
+                        log_size_axis,
                     )
                     st.plotly_chart(fig, width="stretch")
 
@@ -1553,6 +1589,7 @@ def _create_individual_sample_plot(
     show_components: bool,
     view_mode: str,
     sample_name: str,
+    log_size_axis: bool = False,
 ) -> go.Figure:
     """Create a plot for a single sample."""
     fig = go.Figure()
@@ -1665,6 +1702,7 @@ def _create_individual_sample_plot(
             bordercolor="rgba(0,0,0,0)",
         ),
     )
+    _apply_size_axis_scale(fig, log_size_axis)
 
     return fig
 
