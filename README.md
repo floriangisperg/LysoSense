@@ -54,8 +54,11 @@ requirements.txt      Pinned runtime dependencies
 
 ## Citation
 
-If this tool supports your work, please cite:
+If this tool supports your work, please cite **both** the software and the
+underlying method:
 
+- **LysoSense** (this repository) — use the **"Cite this repository"** button on
+  the GitHub page (generated from [CITATION.cff](CITATION.cff)).
 - Klausser et al., 2025. "Increased purity and refolding yield of bacterial
   inclusion bodies by recursive high pressure homogenization."
   [Link](https://www.sciencedirect.com/science/article/pii/S0168165625002706).
