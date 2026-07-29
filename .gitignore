@@ -34,6 +34,8 @@ notebooks/
 *.csv
 *.log
 *.png
+# Keep logo assets tracked (override the *.png ignore above)
+!app/assets/*.png
 claude.md
 agents.md
 

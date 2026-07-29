@@ -75,7 +75,157 @@ def _apply_size_axis_scale(fig: go.Figure, log_size_axis: bool) -> None:
 
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
 CDLAB_URL = "https://www.tuwien.at/en/cdl/ibp4"
+CDG_URL = "https://www.cdg.ac.at/en/research-units/labor/inclusion-body-processing-40"
+BI_URL = "https://www.boehringer-ingelheim.com/"
+IBD_URL = "https://www.tuwien.at/en/tch/icebe/ibdgroup"
 TUWIEN_URL = "https://www.tuwien.at/en/"
+
+
+def _render_credit_logos() -> None:
+    """Clickable logo strip for the page footer.
+
+    Raster logos (PNG/JPG/WebP) are embedded as base64 data-URI ``<img>`` tags.
+    The Boehringer Ingelheim logo is an SVG and is inlined directly: an SVG
+    loaded via a data-URI ``<img>`` can be blocked by the component iframe's
+    content-security policy, whereas inlined ``<svg>`` markup renders reliably.
+    """
+    import base64
+    import re
+    import streamlit.components.v1 as components
+
+    base = Path(__file__).parent / "assets"
+    items = [
+        ("ibd_logo.png", IBD_URL),
+        ("tuwien_logo.webp", TUWIEN_URL),
+        ("bi_logo.svg", BI_URL),
+        ("cdg_logo.png", CDG_URL),
+    ]
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+    parts: List[str] = []
+    for name, url in items:
+        path = base / name
+        if not path.exists():
+            continue
+        if path.suffix.lower() == ".svg":
+            svg = re.sub(r"<\?xml[^>]*\?>", "", path.read_text(encoding="utf-8"), count=1).strip()
+            svg = svg.replace("<svg ", '<svg style="height:54px;width:auto;" ', 1)
+            inner = svg
+        else:
+            uri = "data:" + mime.get(path.suffix.lower(), "image/png") + ";base64,"
+            uri += base64.b64encode(path.read_bytes()).decode()
+            inner = f'<img src="{uri}" style="max-height:54px;max-width:180px;width:auto;">'
+        parts.append(
+            f'<a href="{url}" target="_blank" rel="noopener" '
+            f'style="display:inline-flex;align-items:center;height:54px;margin:0 16px;">'
+            f"{inner}</a>"
+        )
+    if parts:
+        components.html(
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;">'
+            + "".join(parts)
+            + "</div>",
+            height=72,
+        )
+
+
+def _render_footer() -> None:
+    """Credits footer shown at the bottom of the analyzer page."""
+    st.markdown("---")
+    _render_credit_logos()
+    st.caption(
+        "A tool of the CD Laboratory for [Inclusion Body Processing 4.0](%s), "
+        "developed in the [IBD Group — Integrated Bioprocess Development](%s) "
+        "at [TU Wien](%s). Funded by the "
+        "[Christian Doppler Gesellschaft](%s) and [Boehringer Ingelheim](%s)."
+        % (CDLAB_URL, IBD_URL, TUWIEN_URL, CDG_URL, BI_URL)
+    )
+
+
+def _hero_svg() -> str:
+    """Build the start-page hero illustration SVG (process + distribution).
+
+    Top row: intact cells → homogeniser → inclusion bodies. Bottom: the
+    resulting particle-size distribution with the two populations and a "lysis"
+    arrow. Vivid colors, no fixed background — reads on light and dark themes.
+    """
+    import numpy as np
+
+    width, height = 900, 390
+    x0, x1 = 70.0, 850.0
+    base, span = 340.0, 110.0  # distribution axis baseline / peak-height span
+
+    def sx(mu: float) -> float:
+        return x0 + (mu - 0.2) * (x1 - x0)
+
+    def peak_path(amp: float, mu: float, sigma: float) -> str:
+        xs = np.linspace(0.2, 1.2, 240)
+        ys = amp * np.exp(-0.5 * ((xs - mu) / sigma) ** 2)
+        pts = [f"{sx(xv):.1f},{base - yv * span:.1f}" for xv, yv in zip(xs, ys)]
+        return "M " + pts[0] + " L " + " L ".join(pts[1:]) + f" L {x1:.1f},{base:.1f} L {x0:.1f},{base:.1f} Z"
+
+    # --- process row: intact cells -> homogeniser -> inclusion bodies ---
+    cells = [(95, 80, 15), (120, 96, 13), (110, 64, 12), (84, 102, 11)]
+    cell_svg = "".join(
+        f'<circle cx="{cx}" cy="{cy}" r="{cr}" fill="rgba(34,197,94,0.22)" stroke="#22c55e" stroke-width="2"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="{cr * 0.35:.1f}" fill="#16a34a"/>'
+        for cx, cy, cr in cells
+    )
+    ib_dots = [
+        (678, 72), (692, 90), (685, 58), (702, 98), (712, 72), (700, 108), (722, 86), (718, 62),
+        (734, 96), (730, 70), (744, 84), (740, 58), (756, 98), (762, 74), (770, 90), (756, 64),
+    ]
+    ib_svg = "".join(f'<circle cx="{dx}" cy="{dy}" r="3.5" fill="#f97316"/>' for dx, dy in ib_dots)
+    homogeniser = (
+        '<rect x="288" y="76" width="14" height="12" fill="#94a3b8"/>'
+        '<rect x="302" y="52" width="210" height="60" rx="10" fill="#eef2ff" stroke="#1f77b4" stroke-width="2"/>'
+        '<rect x="512" y="76" width="14" height="12" fill="#94a3b8"/>'
+        '<path d="M 352,60 L 408,82 L 352,104" fill="none" stroke="#1f77b4" stroke-width="2"/>'
+        '<path d="M 462,60 L 406,82 L 462,104" fill="none" stroke="#1f77b4" stroke-width="2"/>'
+        '<text x="407" y="132" font-size="13" font-weight="600" fill="#1f77b4" text-anchor="middle">homogeniser</text>'
+    )
+    flow = (
+        '<line x1="160" y1="82" x2="284" y2="82" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>'
+        '<line x1="530" y1="82" x2="664" y2="82" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>'
+    )
+
+    # --- particle-size distribution ---
+    ticks = "".join(
+        f'<line x1="{sx(t):.1f}" y1="{base}" x2="{sx(t):.1f}" y2="{base + 6}" stroke="#cbd5e1"/>'
+        f'<text x="{sx(t):.1f}" y="{base + 22}" font-size="12" fill="#94a3b8" text-anchor="middle">{t:.1f}</text>'
+        for t in (0.2, 0.4, 0.6, 0.8, 1.0, 1.2)
+    )
+    ib = peak_path(1.0, 0.48, 0.06)
+    cell = peak_path(0.34, 0.85, 0.09)
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
+        f'width="100%" style="max-width:860px;display:block;margin:0 auto;font-family:system-ui,sans-serif;">'
+        f'<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">'
+        f'<path d="M0,0 L7,3 L0,6 Z" fill="#3b82f6"/></marker></defs>'
+        f'{cell_svg}{flow}{homogeniser}{ib_svg}'
+        f'<line x1="{x0}" y1="{base}" x2="{x1}" y2="{base}" stroke="#94a3b8" stroke-width="1.5"/>{ticks}'
+        f'<path d="{cell}" fill="rgba(34,197,94,0.20)" stroke="#22c55e" stroke-width="2"/>'
+        f'<path d="{ib}" fill="rgba(249,115,22,0.20)" stroke="#f97316" stroke-width="2"/>'
+        f'<text x="{sx(0.48):.1f}" y="{base - 1.0 * span - 10:.1f}" font-size="13" font-weight="600" '
+        f'fill="#f97316" text-anchor="middle">Inclusion bodies</text>'
+        f'<text x="{sx(0.85):.1f}" y="{base - 0.34 * span - 10:.1f}" font-size="13" font-weight="600" '
+        f'fill="#22c55e" text-anchor="middle">Intact cells</text>'
+        f'<path d="M {sx(0.80):.1f},{base - 0.20 * span:.1f} Q {sx(0.66):.1f},{base - 0.62 * span:.1f} '
+        f'{sx(0.55):.1f},{base - 0.55 * span:.1f}" fill="none" stroke="#3b82f6" stroke-width="1.6" '
+        f'stroke-dasharray="5 4" marker-end="url(#arrow)"/>'
+        f'<text x="{sx(0.665):.1f}" y="{base - 0.70 * span:.1f}" font-size="12" fill="#3b82f6" '
+        f'text-anchor="middle">lysis</text>'
+        f'<text x="{(x0 + x1) / 2:.1f}" y="{base + 40}" font-size="12" fill="#94a3b8" '
+        f'text-anchor="middle">particle size (µm)</text>'
+        f"</svg>"
+    )
+    return svg
+
+
+def _render_hero() -> None:
+    """Render the start-page hero illustration."""
+    import streamlit.components.v1 as components
+
+    components.html(_hero_svg(), height=390)
 
 
 @st.dialog("✨ What's new in LysoSense")
@@ -91,8 +241,13 @@ def whats_new_dialog() -> None:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_guide_html() -> str:
-    """Build (and cache) the standalone guide HTML. See app/guide_html.py."""
+def _cached_guide_html(guide_mtime: float) -> str:
+    """Build (and cache) the standalone guide HTML.
+
+    Keyed on ``guide_html.py``'s mtime so edits to the guide content invalidate
+    the cache — without it, Streamlit caches on this function's own code (which
+    doesn't change) and would keep serving a stale guide.
+    """
     from guide_html import build_guide_html
 
     return build_guide_html()
@@ -119,8 +274,9 @@ def guide_page() -> None:
         "Tip: to read this alongside the analyzer, right-click the 'Guide' entry in "
         "the sidebar and choose 'Open link in new tab'."
     )
+    guide_mtime = (Path(__file__).parent / "guide_html.py").stat().st_mtime
     with st.spinner("Building guide…"):
-        html = _cached_guide_html()
+        html = _cached_guide_html(guide_mtime)
     # The guide bundles inline Plotly.js so it works offline; allow-scripts on the
     # component iframe lets the interactive plots render.
     components.html(html, height=1000, scrolling=True)
@@ -130,17 +286,22 @@ def analyzer_page() -> None:
     page_title = "LysoSense CPS Analyzer"
     st.title(page_title)
     st.markdown(
-        "Differential centrifugal sedimentation workflow for tracking intact cells and inclusion bodies "
-        "during homogenisation (method adapted from [Klausser et al., 2025](%s))."
+        "Differential centrifugal sedimentation (DCS) workflow for tracking intact cells and "
+        "inclusion bodies during homogenisation (method adapted from [Klausser et al., 2025](%s)).\n\n"
+        "Upload your CPS/DCS `.dat` exports in the sidebar — LysoSense fits each trace to separate the "
+        "intact-cell and inclusion-body populations and reports their relative abundances and **lysis "
+        "efficiency** (the share of total signal outside the cell peak). Compare runs side by side, "
+        "inspect every fit, and export the results to XLSX.\n\n"
+        "First time here? Open the **Guide** page in the sidebar for a walkthrough with example plots."
         % ARTICLE_URL
     )
+    _render_hero()
     st.caption(f"LysoSense v{__version__}")
-    st.caption(
-        "Developed in the [CD Laboratory for Inclusion Body Processing 4.0](%s) "
-        "at [TU Wien](%s)."
-        % (CDLAB_URL, TUWIEN_URL)
-    )
+    _render_analyzer_body()
+    _render_footer()
 
+
+def _render_analyzer_body() -> None:
     (
         options,
         show_fit,
