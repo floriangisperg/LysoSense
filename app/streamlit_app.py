@@ -255,14 +255,20 @@ def _cached_guide_html(guide_mtime: float) -> str:
 
 def main() -> None:
     # Multipage entry point. ``set_page_config`` must be the first Streamlit
-    # command; ``st.navigation`` makes the Guide a real served page so it can be
-    # opened in a separate browser tab — which works the same locally and on a
-    # hosted deployment (lysosense.streamlit.app), unlike a server-side
-    # ``webbrowser.open`` that only works for local ``streamlit run``.
+    # command; ``st.navigation`` makes each page a real served route, so the
+    # Home landing page, the Analyzer, and the Guide each have a shareable URL —
+    # which works the same locally and on a hosted deployment
+    # (lysosense.streamlit.app), unlike a server-side ``webbrowser.open`` that
+    # only works for local ``streamlit run``.
     st.set_page_config(page_title="LysoSense CPS Analyzer", page_icon="🔬", layout="wide")
-    analyzer = st.Page(analyzer_page, title="Analyzer", url_path="", default=True, icon="🔬")
+    home = st.Page(home_page, title="Home", url_path="", default=True, icon="🏠")
+    analyzer = st.Page(analyzer_page, title="Analyzer", url_path="analyzer", icon="🔬")
     guide = st.Page(guide_page, title="Guide", url_path="guide", icon="📖")
-    st.navigation([analyzer, guide]).run()
+    # Stash the sibling Page objects so ``home_page`` can build call-to-action
+    # links to the Analyzer and Guide. A function-based page can only be linked
+    # via its ``st.Page`` object, which a page function can't otherwise receive.
+    st.session_state["_nav_pages"] = {"analyzer": analyzer, "guide": guide}
+    st.navigation([home, analyzer, guide]).run()
 
 
 def guide_page() -> None:
@@ -282,23 +288,45 @@ def guide_page() -> None:
     components.html(html, height=1000, scrolling=True)
 
 
-def analyzer_page() -> None:
-    page_title = "LysoSense CPS Analyzer"
-    st.title(page_title)
+def home_page() -> None:
+    """Landing page: what LysoSense does, the process illustration, and onward links."""
+    st.title("LysoSense CPS Analyzer")
+    _render_hero()
     st.markdown(
         "Differential centrifugal sedimentation (DCS) workflow for tracking intact cells and "
         "inclusion bodies during homogenisation (method adapted from [Klausser et al., 2025](%s)).\n\n"
-        "Upload your CPS/DCS `.dat` exports in the sidebar — LysoSense fits each trace to separate the "
-        "intact-cell and inclusion-body populations and reports their relative abundances and **lysis "
-        "efficiency** (the share of total signal outside the cell peak). Compare runs side by side, "
-        "inspect every fit, and export the results to XLSX.\n\n"
-        "First time here? Open the **Guide** page in the sidebar for a walkthrough with example plots."
+        "LysoSense fits each trace to separate the intact-cell and inclusion-body populations and "
+        "reports their relative abundances and **lysis efficiency** (the share of total signal outside "
+        "the cell peak). Compare runs side by side, inspect every fit, and export the results to XLSX."
         % ARTICLE_URL
     )
-    _render_hero()
+
+    # Call-to-action links to the other pages. Function-based pages can only be
+    # linked via their ``st.Page`` object, which ``main`` stashed in session state.
+    pages = st.session_state.get("_nav_pages", {})
+    col1, col2 = st.columns(2)
+    if col1.button(
+        "🔬 Open the Analyzer",
+        type="primary",
+        use_container_width=True,
+        help="Upload .dat files and run the analysis.",
+    ):
+        st.switch_page(pages["analyzer"])
+    col2.page_link(
+        pages["guide"],
+        label="📖 Read the Guide",
+        use_container_width=True,
+        help="A walkthrough with example plots — opens alongside the analyzer.",
+    )
+
     st.caption(f"LysoSense v{__version__}")
-    _render_analyzer_body()
     _render_footer()
+
+
+def analyzer_page() -> None:
+    """The analysis tool: sidebar controls, fitted plots, metrics, and downloads."""
+    st.title("LysoSense CPS Analyzer")
+    _render_analyzer_body()
 
 
 def _render_analyzer_body() -> None:
