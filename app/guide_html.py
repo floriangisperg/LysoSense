@@ -232,16 +232,16 @@ work in the app.</em></p>
 <div class="toc">
   <strong>Contents</strong>
   <ul>
-    <li><a href="#what">What LysoSense measures</a></li>
-    <li><a href="#measurement">About the DCS measurement itself</a></li>
-    <li><a href="#sizes">Set the IB &amp; cell sizes (important)</a></li>
-    <li><a href="#pipeline">How the fit is decided</a></li>
-    <li><a href="#workflow">Step-by-step workflow</a></li>
-    <li><a href="#sidebar">Sidebar reference</a></li>
-    <li><a href="#results">Reading the results</a></li>
-    <li><a href="#examples">Worked examples</a></li>
-    <li><a href="#tips">Tips, gotchas &amp; FAQ</a></li>
-    <li><a href="#trouble">Troubleshooting</a></li>
+    <li>What LysoSense measures</li>
+    <li>About the DCS measurement itself</li>
+    <li>Set the IB &amp; cell sizes (important)</li>
+    <li>How the fit is decided</li>
+    <li>Step-by-step workflow</li>
+    <li>Sidebar reference</li>
+    <li>Reading the results</li>
+    <li>Worked examples</li>
+    <li>Tips, gotchas &amp; FAQ</li>
+    <li>Troubleshooting</li>
   </ul>
 </div>
 
@@ -402,6 +402,8 @@ points more influence).</p>
 <p><strong>View mode:</strong> Combined (raw + fit + components), Fit Overview
 (components only), or Raw Data Only. Toggle the fit envelope, components, and a
 logarithmic size axis (display only — the fit always runs in linear µm).</p>
+<p><strong>Light / dark theme:</strong> switch via the menu (<span class="kbd">☰</span>,
+top-right) → <em>Settings</em> → <em>Theme</em> (light, dark, or follow system).</p>
 
 <h2 id="results">Reading the results</h2>
 <table>
