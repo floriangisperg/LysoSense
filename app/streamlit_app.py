@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import sys
+import tempfile
+import webbrowser
 from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -88,6 +90,36 @@ def whats_new_dialog() -> None:
             st.divider()
 
 
+@st.cache_data(show_spinner=False)
+def _cached_guide_html() -> str:
+    """Build (and cache) the standalone guide HTML. See app/guide_html.py."""
+    from guide_html import build_guide_html
+
+    return build_guide_html()
+
+
+def _open_guide_window() -> None:
+    """Open the user guide in a separate browser window.
+
+    The guide is written to a temp HTML file and opened server-side with
+    ``webbrowser``, so it appears as a real window/tab the user can keep open
+    beside the running app. (This opens on the machine hosting Streamlit — the
+    local machine when run with ``streamlit run``.)
+    """
+    html = _cached_guide_html()
+    out = Path(tempfile.gettempdir()) / "lysosense_guide.html"
+    out.write_text(html, encoding="utf-8")
+    try:
+        opened = webbrowser.open(out.as_uri())
+    except Exception:
+        opened = False
+    if not opened:
+        st.warning(
+            "Couldn't open the guide in a browser automatically. "
+            f"Open this file manually:\n{out}"
+        )
+
+
 def main() -> None:
     page_title = "LysoSense CPS Analyzer"
     st.set_page_config(page_title=page_title, layout="wide")
@@ -112,6 +144,8 @@ def main() -> None:
         size_min_um,
         size_max_um,
         log_size_axis,
+        peak_name_cell,
+        peak_name_ib,
         uploaded_files,
     ) = _render_sidebar()
 
@@ -161,19 +195,23 @@ def main() -> None:
 
     with tab1:
         _render_overview_tab(
-            active_results, show_fit, show_components, view_mode, log_size_axis
+            active_results, show_fit, show_components, view_mode, log_size_axis,
+            peak_name_cell, peak_name_ib,
         )
 
     with tab2:
         _render_individual_samples_tab(
-            active_results, show_fit, show_components, view_mode, log_size_axis
+            active_results, show_fit, show_components, view_mode, log_size_axis,
+            peak_name_cell, peak_name_ib,
         )
 
     with tab3:
-        summary_df = _render_results_tab(active_results)
+        summary_df = _render_results_tab(
+            active_results, peak_name_cell, peak_name_ib
+        )
 
     with tab4:
-        _render_details_tab(active_results)
+        _render_details_tab(active_results, peak_name_cell, peak_name_ib)
 
     # Download buttons stay at bottom
     st.markdown("---")
@@ -182,11 +220,13 @@ def main() -> None:
     with col1:
         _render_download(summary_df)
     with col2:
-        _render_experimental_data_download(active_results)
+        _render_experimental_data_download(
+            active_results, peak_name_cell, peak_name_ib
+        )
 
 
 def _render_sidebar() -> Tuple[
-    AnalysisOptions, bool, bool, str, bool, bool, str, bool, bool, float, float, bool, List[Any]
+    AnalysisOptions, bool, bool, str, bool, bool, str, bool, bool, float, float, bool, str, str, List[Any]
 ]:
     # Data upload section (always expanded)
     with st.sidebar.expander("📁 Data Upload", expanded=True):
@@ -305,6 +345,20 @@ def _render_sidebar() -> Tuple[
                 max_value=3.0,
                 step=0.01,
                 key="mu_cell",
+            )
+
+            st.markdown("**Peak labels**")
+            peak_name_ib = st.text_input(
+                "IB peak name",
+                value="IBs",
+                key="peak_name_ib",
+                help="Display label for the inclusion-body peak (smaller). Shown in plots, the results table, and XLSX exports.",
+            )
+            peak_name_cell = st.text_input(
+                "Cell peak name",
+                value="Cells",
+                key="peak_name_cell",
+                help="Display label for the cell peak (larger). Lysis% is always reported for this peak.",
             )
 
             st.checkbox(
@@ -608,6 +662,8 @@ def _render_sidebar() -> Tuple[
                             "autofit",
                             "mu_ib",
                             "mu_cell",
+                            "peak_name_ib",
+                            "peak_name_cell",
                             "allow_shift",
                             "second_peak",
                             "limit_peak_width",
@@ -647,6 +703,8 @@ def _render_sidebar() -> Tuple[
         compare_models = True
         mu_ib = 0.48
         mu_cell = 0.85
+        peak_name_ib = "IBs"
+        peak_name_cell = "Cells"
         allow_shift = 20
         second_peak_percent = 0.02
         limit_peak_width = True
@@ -792,14 +850,23 @@ def _render_sidebar() -> Tuple[
         overlap_min_area_frac=safe_float(overlap_min_area, 3.0) / 100.0,
         relax_peak_widths=bool(st.session_state.get("relax_widths", False)),
     )
-    # Version footer + release notes — always shown, independent of uploads.
+    # Version footer + guide + release notes — always shown, independent of uploads.
     st.sidebar.markdown("---")
-    if st.sidebar.button(
-        "✨ What's new?",
-        key="whats_new",
-        help="See recent changes and the current app version.",
-    ):
-        whats_new_dialog()
+    footer_col1, footer_col2 = st.sidebar.columns(2)
+    with footer_col1:
+        if st.button(
+            "📖 Guide",
+            key="guide",
+            help="Open the full user guide in a separate browser window (with example plots).",
+        ):
+            _open_guide_window()
+    with footer_col2:
+        if st.button(
+            "✨ What's new?",
+            key="whats_new",
+            help="See recent changes and the current app version.",
+        ):
+            whats_new_dialog()
 
     return (
         options,
@@ -814,6 +881,8 @@ def _render_sidebar() -> Tuple[
         safe_float(size_min_um, 0.2) or 0.2,
         safe_float(size_max_um, 1.2) or 1.2,
         log_size_axis,
+        peak_name_cell,
+        peak_name_ib,
         uploaded_files,
     )
 
@@ -1000,10 +1069,12 @@ def _fit_residual_score(result: AnalysisResult) -> float:
     return (max_abs / peak_height) + 0.25 * (mean_abs / peak_height)
 
 
-def _cell_component_label(analysis: AnalysisResult) -> str:
+def _cell_component_label(
+    analysis: AnalysisResult, peak_name_cells: str = "Cells"
+) -> str:
     if analysis.fit_kind == "overlap":
-        return "Cells (overlap fit)"
-    return "Cells"
+        return f"{peak_name_cells} (overlap fit)"
+    return peak_name_cells
 
 
 def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
@@ -1110,6 +1181,8 @@ def _render_fit_overview(
     show_fit: bool,
     show_components: bool,
     log_size_axis: bool = False,
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
 ) -> None:
     """Organized plot showing only fitted data with sample-specific colors and grouped legends."""
     fig = go.Figure()
@@ -1155,7 +1228,7 @@ def _render_fit_overview(
                     go.Scatter(
                         x=analysis.dense_fit["particle_size_um"],
                         y=analysis.dense_fit["cells_component_ug"],
-                        name=_cell_component_label(analysis),
+                        name=_cell_component_label(analysis, peak_name_cell),
                         mode="lines",
                         line=dict(color=color, width=2),
                         legendgroup=group_name,
@@ -1168,7 +1241,7 @@ def _render_fit_overview(
                 go.Scatter(
                     x=analysis.dense_fit["particle_size_um"],
                     y=analysis.dense_fit["ibs_component_ug"],
-                    name="IBs",
+                    name=peak_name_ib,
                     mode="lines",
                     line=dict(color=color, width=2, dash="dot"),
                     legendgroup=group_name,
@@ -1193,7 +1266,7 @@ def _render_fit_overview(
 
     # Add legend guide
     st.markdown(
-        "**Legend Guide:** Click sample names to toggle all traces • Click individual traces to toggle • Line styles: solid=cells, dashed=fit, dotted=IBs"
+        f"**Legend Guide:** Click sample names to toggle all traces • Click individual traces to toggle • Line styles: solid={peak_name_cell.lower()}, dashed=fit, dotted={peak_name_ib.lower()}"
     )
 
     # Check if any samples are normalized
@@ -1216,6 +1289,8 @@ def _render_plot(
     show_fit: bool,
     show_components: bool,
     log_size_axis: bool = False,
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
 ) -> None:
     """Combined plot with grouped legends for better organization."""
     fig = go.Figure()
@@ -1272,7 +1347,7 @@ def _render_plot(
                     go.Scatter(
                         x=analysis.dense_fit["particle_size_um"],
                         y=analysis.dense_fit["cells_component_ug"],
-                        name=_cell_component_label(analysis),
+                        name=_cell_component_label(analysis, peak_name_cell),
                         mode="lines",
                         line=dict(color=color, width=1.5),
                         legendgroup=group_name,
@@ -1283,7 +1358,7 @@ def _render_plot(
                 go.Scatter(
                     x=analysis.dense_fit["particle_size_um"],
                     y=analysis.dense_fit["ibs_component_ug"],
-                    name="IBs",
+                    name=peak_name_ib,
                     mode="lines",
                     line=dict(color=color, width=1.5, dash="dot"),
                     legendgroup=group_name,
@@ -1308,7 +1383,7 @@ def _render_plot(
 
     # Add legend guide
     st.markdown(
-        "**Legend Guide:** Click sample names to toggle all traces • Line styles: solid=raw/cells, dashed=fit, dotted=IBs"
+        f"**Legend Guide:** Click sample names to toggle all traces • Line styles: solid=raw/{peak_name_cell.lower()}, dashed=fit, dotted={peak_name_ib.lower()}"
     )
 
     # Check if any samples are normalized
@@ -1326,7 +1401,11 @@ def _render_plot(
     st.plotly_chart(fig, width="stretch")
 
 
-def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFrame:
+def _render_metrics(
+    entries: Sequence[Tuple[str, AnalysisResult]],
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
+) -> pd.DataFrame:
     records: List[Dict[str, float | str | None]] = []
     for label, analysis in entries:
         row: Dict[str, float | str | None] = {"measurement": label}
@@ -1388,6 +1467,18 @@ def _render_metrics(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFra
     final_columns = existing_columns + other_columns
 
     summary = summary[final_columns]
+
+    # Surface the user-supplied peak names in the display + export headers.
+    # Internal metric keys are left untouched (they are asserted in the test
+    # suite); only this display/export frame is renamed.
+    summary = summary.rename(
+        columns={
+            "area_cells": f"area ({peak_name_cell})",
+            "area_inclusion_bodies": f"area ({peak_name_ib})",
+            "mean_cell_µm": f"mean {peak_name_cell} (µm)",
+            "mean_ib_µm": f"mean {peak_name_ib} (µm)",
+        }
+    )
 
     st.subheader("Relative abundance and lysis efficiency")
     numeric_cols = summary.select_dtypes(include="number").columns
@@ -1455,6 +1546,8 @@ def _render_download(summary_df: pd.DataFrame) -> None:
 
 def _render_experimental_data_download(
     results: List[Tuple[str, AnalysisResult]],
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
 ) -> None:
     """Download button for experimental data with fits.
 
@@ -1463,8 +1556,8 @@ def _render_experimental_data_download(
     - particle_size_um: Original x values
     - mass_signal_ug: Original y values (raw signal)
     - fit_signal_ug: Total fitted signal
-    - cells_component_ug: Cells component of the fit
-    - ibs_component_ug: Inclusion bodies component of the fit
+    - {peak_name_cell} component (µg): Cells component of the fit
+    - {peak_name_ib} component (µg): Inclusion bodies component of the fit
     """
     if not results:
         return
@@ -1476,8 +1569,15 @@ def _render_experimental_data_download(
             # Excel sheet names are limited to 31 characters
             sheet_name = label.replace(".dat", "")[:31]
 
-            # Use observed DataFrame which contains original data and fitted values
-            df = analysis.observed.copy()
+            # Use observed DataFrame which contains original data and fitted values.
+            # Surface the user-supplied peak names in the exported column headers;
+            # the in-memory column names are left unchanged.
+            df = analysis.observed.copy().rename(
+                columns={
+                    "cells_component_ug": f"{peak_name_cell} component (µg)",
+                    "ibs_component_ug": f"{peak_name_ib} component (µg)",
+                }
+            )
 
             # Write to sheet
             df.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -1492,7 +1592,11 @@ def _render_experimental_data_download(
     )
 
 
-def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
+def _render_details(
+    entries: Sequence[Tuple[str, AnalysisResult]],
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
+) -> None:
     st.subheader("Detailed run information")
     for label, analysis in entries:
         measurement = analysis.measurement
@@ -1515,7 +1619,12 @@ def _render_details(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
                     "cells_component_ug",
                     "ibs_component_ug",
                 ]
-            ]
+            ].rename(
+                columns={
+                    "cells_component_ug": f"{peak_name_cell} (µg)",
+                    "ibs_component_ug": f"{peak_name_ib} (µg)",
+                }
+            )
             st.dataframe(preview, width="stretch")
 
 
@@ -1525,6 +1634,8 @@ def _render_overview_tab(
     show_components: bool,
     view_mode: str,
     log_size_axis: bool = False,
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
 ) -> None:
     """Render the Overview tab with combined plots."""
     st.markdown("### Combined Analysis Overview")
@@ -1534,9 +1645,15 @@ def _render_overview_tab(
     if view_mode == "Raw Data Only":
         _render_raw_data_plot(entries, log_size_axis)
     elif view_mode == "Fit Overview":
-        _render_fit_overview(entries, show_fit, show_components, log_size_axis)
+        _render_fit_overview(
+            entries, show_fit, show_components, log_size_axis,
+            peak_name_cell, peak_name_ib,
+        )
     else:  # Combined view (original)
-        _render_plot(entries, show_fit, show_components, log_size_axis)
+        _render_plot(
+            entries, show_fit, show_components, log_size_axis,
+            peak_name_cell, peak_name_ib,
+        )
 
 
 def _render_individual_samples_tab(
@@ -1545,6 +1662,8 @@ def _render_individual_samples_tab(
     show_components: bool,
     view_mode: str,
     log_size_axis: bool = False,
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
 ) -> None:
     """Render individual samples in a grid layout."""
     st.markdown("### Individual Sample Analysis")
@@ -1579,6 +1698,8 @@ def _render_individual_samples_tab(
                         view_mode,
                         sample_name,
                         log_size_axis,
+                        peak_name_cell,
+                        peak_name_ib,
                     )
                     st.plotly_chart(fig, width="stretch")
 
@@ -1590,6 +1711,8 @@ def _create_individual_sample_plot(
     view_mode: str,
     sample_name: str,
     log_size_axis: bool = False,
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
 ) -> go.Figure:
     """Create a plot for a single sample."""
     fig = go.Figure()
@@ -1630,7 +1753,7 @@ def _create_individual_sample_plot(
                         go.Scatter(
                             x=analysis.dense_fit["particle_size_um"],
                             y=analysis.dense_fit["cells_component_ug"],
-                            name=_cell_component_label(analysis),
+                            name=_cell_component_label(analysis, peak_name_cell),
                             mode="lines",
                             line=dict(color=color, width=1.5),
                         )
@@ -1640,7 +1763,7 @@ def _create_individual_sample_plot(
                     go.Scatter(
                         x=analysis.dense_fit["particle_size_um"],
                         y=analysis.dense_fit["ibs_component_ug"],
-                        name="IBs",
+                        name=peak_name_ib,
                         mode="lines",
                         line=dict(color=color, width=1.5, dash="dot"),
                     )
@@ -1674,7 +1797,7 @@ def _create_individual_sample_plot(
                         go.Scatter(
                             x=analysis.dense_fit["particle_size_um"],
                             y=analysis.dense_fit["cells_component_ug"],
-                            name=_cell_component_label(analysis),
+                            name=_cell_component_label(analysis, peak_name_cell),
                             mode="lines",
                             line=dict(color=color, width=1.5),
                         )
@@ -1684,7 +1807,7 @@ def _create_individual_sample_plot(
                     go.Scatter(
                         x=analysis.dense_fit["particle_size_um"],
                         y=analysis.dense_fit["ibs_component_ug"],
-                        name="IBs",
+                        name=peak_name_ib,
                         mode="lines",
                         line=dict(color=color, width=1.5, dash="dot"),
                     )
@@ -1707,21 +1830,29 @@ def _create_individual_sample_plot(
     return fig
 
 
-def _render_results_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> pd.DataFrame:
+def _render_results_tab(
+    entries: Sequence[Tuple[str, AnalysisResult]],
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
+) -> pd.DataFrame:
     """Render the Results Table tab."""
     st.markdown("### Analysis Results")
     st.markdown("Detailed metrics and fit quality for all selected samples.")
 
-    summary_df = _render_metrics(entries)
+    summary_df = _render_metrics(entries, peak_name_cell, peak_name_ib)
     return summary_df
 
 
-def _render_details_tab(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
+def _render_details_tab(
+    entries: Sequence[Tuple[str, AnalysisResult]],
+    peak_name_cell: str = "Cells",
+    peak_name_ib: str = "IBs",
+) -> None:
     """Render the Detailed Information tab."""
     st.markdown("### Detailed Run Information")
     st.markdown("Comprehensive metadata and data preview for each sample.")
 
-    _render_details(entries)
+    _render_details(entries, peak_name_cell, peak_name_ib)
 
 
 if __name__ == "__main__":

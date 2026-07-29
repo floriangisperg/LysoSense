@@ -723,16 +723,21 @@ def _fit_overlap_deconvolution(
     if fitres is None:
         return None
 
+    # ``_estimate_overlap_area_robustness`` returns only the NotRequired
+    # ``overlap_*`` keys; cast so the partial dict type-checks for the merge.
     fitres.update(
-        _estimate_overlap_area_robustness(
-            x,
-            y,
-            opts,
-            hints,
-            popt_1peak,
-            bic_1peak,
-            model_1peak,
-            single_component,
+        cast(
+            _FitResult,
+            _estimate_overlap_area_robustness(
+                x,
+                y,
+                opts,
+                hints,
+                popt_1peak,
+                bic_1peak,
+                model_1peak,
+                single_component,
+            ),
         )
     )
     return fitres

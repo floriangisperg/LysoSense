@@ -11,10 +11,18 @@ to import ``datetime`` or touch the clock at import time.
 
 from __future__ import annotations
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # (version, date, [human-readable change bullets]) — newest release first.
 CHANGELOG: list[tuple[str, str, list[str]]] = [
+    (
+        "1.2.0",
+        "2026-07-29",
+        [
+            "Custom peak names: rename the two fitted components in plots, the results table, and XLSX exports.",
+            "In-app user guide with example plots, opened in a separate browser window (📖 Guide button).",
+        ],
+    ),
     (
         "1.1.0",
         "2026-07-27",
