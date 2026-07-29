@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import io
 import sys
-import tempfile
-import webbrowser
 from dataclasses import fields, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -76,6 +74,8 @@ def _apply_size_axis_scale(fig: go.Figure, log_size_axis: bool) -> None:
 
 
 ARTICLE_URL = "https://www.sciencedirect.com/science/article/pii/S0168165625002706"
+CDLAB_URL = "https://www.tuwien.at/en/cdl/ibp4"
+TUWIEN_URL = "https://www.tuwien.at/en/"
 
 
 @st.dialog("✨ What's new in LysoSense")
@@ -98,31 +98,36 @@ def _cached_guide_html() -> str:
     return build_guide_html()
 
 
-def _open_guide_window() -> None:
-    """Open the user guide in a separate browser window.
-
-    The guide is written to a temp HTML file and opened server-side with
-    ``webbrowser``, so it appears as a real window/tab the user can keep open
-    beside the running app. (This opens on the machine hosting Streamlit — the
-    local machine when run with ``streamlit run``.)
-    """
-    html = _cached_guide_html()
-    out = Path(tempfile.gettempdir()) / "lysosense_guide.html"
-    out.write_text(html, encoding="utf-8")
-    try:
-        opened = webbrowser.open(out.as_uri())
-    except Exception:
-        opened = False
-    if not opened:
-        st.warning(
-            "Couldn't open the guide in a browser automatically. "
-            f"Open this file manually:\n{out}"
-        )
-
-
 def main() -> None:
+    # Multipage entry point. ``set_page_config`` must be the first Streamlit
+    # command; ``st.navigation`` makes the Guide a real served page so it can be
+    # opened in a separate browser tab — which works the same locally and on a
+    # hosted deployment (lysosense.streamlit.app), unlike a server-side
+    # ``webbrowser.open`` that only works for local ``streamlit run``.
+    st.set_page_config(page_title="LysoSense CPS Analyzer", page_icon="🔬", layout="wide")
+    analyzer = st.Page(analyzer_page, title="Analyzer", url_path="", default=True, icon="🔬")
+    guide = st.Page(guide_page, title="Guide", url_path="guide", icon="📖")
+    st.navigation([analyzer, guide]).run()
+
+
+def guide_page() -> None:
+    """Render the user guide page (prose + interactive example plots)."""
+    import streamlit.components.v1 as components
+
+    st.title("📖 LysoSense — User Guide")
+    st.caption(
+        "Tip: to read this alongside the analyzer, right-click the 'Guide' entry in "
+        "the sidebar and choose 'Open link in new tab'."
+    )
+    with st.spinner("Building guide…"):
+        html = _cached_guide_html()
+    # The guide bundles inline Plotly.js so it works offline; allow-scripts on the
+    # component iframe lets the interactive plots render.
+    components.html(html, height=1000, scrolling=True)
+
+
+def analyzer_page() -> None:
     page_title = "LysoSense CPS Analyzer"
-    st.set_page_config(page_title=page_title, layout="wide")
     st.title(page_title)
     st.markdown(
         "Differential centrifugal sedimentation workflow for tracking intact cells and inclusion bodies "
@@ -130,6 +135,11 @@ def main() -> None:
         % ARTICLE_URL
     )
     st.caption(f"LysoSense v{__version__}")
+    st.caption(
+        "Developed in the [CD Laboratory for Inclusion Body Processing 4.0](%s) "
+        "at [TU Wien](%s)."
+        % (CDLAB_URL, TUWIEN_URL)
+    )
 
     (
         options,
@@ -850,23 +860,14 @@ def _render_sidebar() -> Tuple[
         overlap_min_area_frac=safe_float(overlap_min_area, 3.0) / 100.0,
         relax_peak_widths=bool(st.session_state.get("relax_widths", False)),
     )
-    # Version footer + guide + release notes — always shown, independent of uploads.
+    # Version footer + release notes — always shown, independent of uploads.
     st.sidebar.markdown("---")
-    footer_col1, footer_col2 = st.sidebar.columns(2)
-    with footer_col1:
-        if st.button(
-            "📖 Guide",
-            key="guide",
-            help="Open the full user guide in a separate browser window (with example plots).",
-        ):
-            _open_guide_window()
-    with footer_col2:
-        if st.button(
-            "✨ What's new?",
-            key="whats_new",
-            help="See recent changes and the current app version.",
-        ):
-            whats_new_dialog()
+    if st.sidebar.button(
+        "✨ What's new?",
+        key="whats_new",
+        help="See recent changes and the current app version.",
+    ):
+        whats_new_dialog()
 
     return (
         options,
