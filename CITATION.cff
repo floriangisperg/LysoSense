@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use LysoSense, please cite this software as well as the underlying method (Klausser et al., 2025)."
+title: "LysoSense: DCS/CPS trace analyzer for quantifying cell lysis and inclusion bodies"
+type: software
+license: "Other"
+repository-code: "https://github.com/floriangisperg/LysoSense"
+version: "1.2.0"
+date-released: "2026-07-29"
+keywords:
+  - differential centrifugal sedimentation
+  - inclusion bodies
+  - cell lysis
+  - homogenisation
+  - Streamlit
+authors:
+  - family-names: Gisperg
+    given-names: Florian
+    affiliation: "Research Group for Integrated Bioprocess Development, TU Wien"
