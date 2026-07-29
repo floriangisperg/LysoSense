@@ -1,3 +1,9 @@
 line-length = 88
 target-version = "py313"
 extend-exclude = ["data", "results", "src/lysosense.egg-info", "notebooks"]
+
+# Explicit rule selection so CI is stable across ruff releases. ruff 0.16
+# expanded its *default* selection (now includes UP/C/...), which would flag the
+# whole codebase. Pin to the classic set the project has historically enforced.
+[lint]
+select = ["E4", "E7", "E9", "F"]
