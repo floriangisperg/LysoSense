@@ -117,35 +117,37 @@ The reported `fit_kind` is one of `one`, `two`, `overlap`.
 ### Data Upload
 Drop `.dat` exports. Use the *Traces to analyze* selector to focus on a subset.
 
+### Peaks & Sample
+- **Peak labels** — rename the two components (e.g. *debris*, *aggregates*) for
+  separation samples. Names appear in the plots, the results table and the
+  downloads. Lysis % is always calculated for the *Cell* peak.
+- **IB / Cell target size (µm)** — expected peak centres (defaults 0.48 / 0.85).
+  **Adjust these to where your peaks actually sit.** The fit may shift each peak
+  within the *Allowed peak shift* window.
+- **Limit particle-size range** — restrict the fit to a size window
+  (default 0.2–1.2 µm). Keep this on to ignore large debris outside the range of
+  interest.
+
 ### Data Preprocessing
 - **Baseline subtraction** — removes a constant/edge offset. Try only if the
   trace clearly does not return to zero (or goes negative). Methods: *minimum*,
   *percentile* (1st), *linear* (edge fit).
 - **Normalize data** — scales every trace to its own maximum, so samples of
   different concentration can be compared. Units become *relative weight*.
-- **Limit particle-size range** — restrict the fit to a size window
-  (default 0.2–1.2 µm). Keep this on to ignore large debris.
 
-### Peak detection
-- **Automatic** (default): resolved peaks first, overlap deconvolution only if a
-  shoulder is detected.
-- **Resolved peaks only**: stricter — needs a clear second maximum.
-- **Allow overlapping peaks**: forces overlap deconvolution on.
-- **Single peak only**: disables the two-peak fit entirely.
-
-### Peak parameters
-- **IB / Cell target size (µm)** — expected peak centres (defaults 0.48 / 0.85).
-  **Adjust these to where your peaks actually sit.** The fit may shift each peak
-  within the *Allowed peak shift* window.
-- **Peak labels** — rename the two components (e.g. *debris*, *aggregates*) for
-  separation samples. Names appear in the plots, the results table and the
-  downloads. Lysis % is always calculated for the *Cell* peak.
-- **Relax peak-width constraints** — for genuinely broad peaks (see Example D).
-  A tight fit is tried first; widths are relaxed only if R² is poor, so clean
-  traces are unaffected.
+### Fitting
 - **Peak model** — *autofit* (recommended) tries gaussian / lognormal /
   splitgaussian / gennormal and keeps the best; or pick one, or a different model
   per peak.
+- **Relax peak-width constraints** — for genuinely broad peaks (see Example D).
+  A tight fit is tried first; widths are relaxed only if R² is poor, so clean
+  traces are unaffected.
+- **Peak detection**:
+  - **Automatic** (default): resolved peaks first, overlap deconvolution only if a
+    shoulder is detected.
+  - **Resolved peaks only**: stricter — needs a clear second maximum.
+  - **Allow overlapping peaks**: forces overlap deconvolution on.
+  - **Single peak only**: disables the two-peak fit entirely.
 
 ### Advanced
 **Sensitivity** presets (Low / Medium / High) set the 2-peak gates together.
@@ -174,14 +176,27 @@ axis (display only — the fit always runs in linear µm).
 
 ## Reading the results
 
+The **Results Table** tab shows two tables: **Results** (lysis efficiency and the
+peak positions, widths and areas it derives from) and **Diagnostics** (how
+reliable each fit is). Lysis efficiency leads the Results table.
+
+### Results columns
 | Column | Meaning |
 | --- | --- |
-| `fit_kind` | one / two / overlap — how many peaks were fitted. |
 | `lysis_efficiency` | 1 − cell area ÷ total area. The headline number. |
 | `intact_fraction` | cell area ÷ total area (= 1 − lysis). |
-| `area_cells` / `area_inclusion_bodies` | Integrated area of each component. |
+| `fit_kind` | one / two / overlap — how many peaks were fitted (a one-peak fit forces lysis to 0% or 100%). |
 | `mean_cell_µm` / `mean_ib_µm` | Mean particle size of each component. |
+| `fwhm_cell_µm` / `fwhm_ib_µm` | Full-width-at-half-maximum (peak width) of each component. A surprisingly narrow width can flag an over-tight fit — try *Relax peak-width constraints*. |
+| `area_cells` / `area_inclusion_bodies` | Integrated area of each component. |
+| `area_total` | Sum of the two component areas. |
+
+### Diagnostics columns
+| Column | Meaning |
+| --- | --- |
 | `r_squared` | Goodness of fit. 🟢 ≥0.95 · 🟡 ≥0.90 · 🟠 ≥0.80 · 🔴 <0.80. |
+| `shoulder_verdict` | *shoulder / none / indeterminate / n/a* — an objective check for a second component, independent of the fit. |
+| `shoulder_excess_sigma` | How strongly the right tail exceeds a single-peak prediction (higher = more shoulder). |
 | `area_robustness` | Overlap fits only: *stable / moderate / uncertain* — how much the cell-area estimate moves when overlap settings vary. |
 
 The four tabs: **Overview** (all traces together), **Individual Samples** (one

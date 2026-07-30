@@ -21,6 +21,7 @@ CHANGELOG: list[tuple[str, str, list[str]]] = [
         [
             "Results table split into a Results table (lysis efficiency, peak positions, widths and areas) and a Diagnostics table (R², fit quality, shoulder verdict, robustness). Lysis efficiency now leads the Results table instead of sitting at the far right.",
             "Peak widths exposed: each fit now reports the full-width-at-half-maximum (FWHM) of the inclusion-body and cell peaks in the Results table and XLSX exports.",
+            "Sidebar reorganized: a new 'Peaks & Sample' group puts peak labels, target sizes and the size window up front (the inputs that most affect lysis); model and detection controls are regrouped under 'Fitting'; rarely-used preprocessing is collapsed by default.",
         ],
     ),
     (

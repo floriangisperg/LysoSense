@@ -439,8 +439,72 @@ def _render_sidebar() -> Tuple[
 
     # Only show other sections if files are uploaded
     if uploaded_files:
-        # Data preprocessing section
-        with st.sidebar.expander("🔧 Data Preprocessing", expanded=True):
+        # Peaks & sample setup — the inputs that most directly determine lysis
+        # (peak labels, target sizes, and the analysis window), so they sit first.
+        with st.sidebar.expander("🎯 Peaks & Sample", expanded=True):
+            st.markdown("**Peak labels**")
+            peak_name_ib = st.text_input(
+                "IB peak name",
+                value="IBs",
+                key="peak_name_ib",
+                help="Display label for the inclusion-body peak (smaller). Shown in plots, the results table, and XLSX exports.",
+            )
+            peak_name_cell = st.text_input(
+                "Cell peak name",
+                value="Cells",
+                key="peak_name_cell",
+                help="Display label for the cell peak (larger). Lysis% is always reported for this peak.",
+            )
+
+            st.markdown("**Peak targets**")
+            mu_ib = st.number_input(
+                "IB target size (µm)",
+                value=0.48,
+                min_value=0.1,
+                max_value=2.0,
+                step=0.01,
+                key="mu_ib",
+            )
+            mu_cell = st.number_input(
+                "Cell target size (µm)",
+                value=0.85,
+                min_value=0.1,
+                max_value=3.0,
+                step=0.01,
+                key="mu_cell",
+            )
+
+            st.markdown("**Particle-size window**")
+            limit_size_range = st.checkbox(
+                "Limit particle-size range for fitting",
+                value=True,
+                help="Restrict analysis to a selected particle-size window. Leave off to use the full uploaded CPS/DCS trace.",
+                key="limit_size_range",
+            )
+            range_col1, range_col2 = st.columns(2)
+            with range_col1:
+                size_min_um = st.number_input(
+                    "Min size (µm)",
+                    value=0.2,
+                    min_value=0.0,
+                    max_value=50.0,
+                    step=0.1,
+                    disabled=not limit_size_range,
+                    key="size_min_um",
+                )
+            with range_col2:
+                size_max_um = st.number_input(
+                    "Max size (µm)",
+                    value=1.2,
+                    min_value=0.1,
+                    max_value=50.0,
+                    step=0.1,
+                    disabled=not limit_size_range,
+                    key="size_max_um",
+                )
+
+        # Data preprocessing (rarely changed — collapsed by default)
+        with st.sidebar.expander("🔧 Data Preprocessing", expanded=False):
             baseline_subtraction = st.checkbox(
                 "Baseline subtraction",
                 value=False,
@@ -470,39 +534,44 @@ def _render_sidebar() -> Tuple[
                     "**Method**: Max intensity normalization (scales to maximum signal value)"
                 )
 
-            st.markdown("---")  # Separator
-
-            limit_size_range = st.checkbox(
-                "Limit particle-size range for fitting",
-                value=True,
-                help="Restrict analysis to a selected particle-size window. Leave off to use the full uploaded CPS/DCS trace.",
-                key="limit_size_range",
+        # Fitting — model shape, width handling, and detection mode
+        with st.sidebar.expander("⚙️ Fitting", expanded=True):
+            model_options = (
+                "gaussian",
+                "lognormal",
+                "splitgaussian",
+                "gennormal",
+                "autofit",
             )
-            range_col1, range_col2 = st.columns(2)
-            with range_col1:
-                size_min_um = st.number_input(
-                    "Min size (µm)",
-                    value=0.2,
-                    min_value=0.0,
-                    max_value=50.0,
-                    step=0.1,
-                    disabled=not limit_size_range,
-                    key="size_min_um",
-                )
-            with range_col2:
-                size_max_um = st.number_input(
-                    "Max size (µm)",
-                    value=1.2,
-                    min_value=0.1,
-                    max_value=50.0,
-                    step=0.1,
-                    disabled=not limit_size_range,
-                    key="size_max_um",
-                )
+            default_model = st.session_state.get("model", "autofit")
+            default_index = (
+                model_options.index(default_model)
+                if default_model in model_options
+                else 0
+            )
+            model = st.radio(
+                "Peak model",
+                model_options,
+                index=default_index,
+                key="model",
+            )
+            compare_models = model == "autofit"
 
-        # Model settings section
-        with st.sidebar.expander("⚙️ Model Settings", expanded=True):
-            st.markdown("**Peak Detection**")
+            st.checkbox(
+                "Relax peak-width constraints (broad / overlapping peaks)",
+                value=False,
+                key="relax_widths",
+                help=(
+                    "Off (default): use the standard tight peak-width bounds. "
+                    "Turn this on for instruments/data where peaks sit broader than "
+                    "the defaults expect (typical symptom: the fit is sharper/narrower "
+                    "than the data and R² is poor). When on, a tight fit is tried first "
+                    "and the widths are only relaxed if that fit scores below R²=0.92, "
+                    "so clean traces are left unchanged."
+                ),
+            )
+
+            st.markdown("**Peak detection**")
             detection_modes = (
                 "Automatic",
                 "Resolved peaks only",
@@ -527,73 +596,6 @@ def _render_sidebar() -> Tuple[
                 ),
                 key="peak_detection_mode",
             )
-
-            st.markdown("**Peak Parameters**")
-            mu_ib = st.number_input(
-                "IB target size (µm)",
-                value=0.48,
-                min_value=0.1,
-                max_value=2.0,
-                step=0.01,
-                key="mu_ib",
-            )
-            mu_cell = st.number_input(
-                "Cell target size (µm)",
-                value=0.85,
-                min_value=0.1,
-                max_value=3.0,
-                step=0.01,
-                key="mu_cell",
-            )
-
-            st.markdown("**Peak labels**")
-            peak_name_ib = st.text_input(
-                "IB peak name",
-                value="IBs",
-                key="peak_name_ib",
-                help="Display label for the inclusion-body peak (smaller). Shown in plots, the results table, and XLSX exports.",
-            )
-            peak_name_cell = st.text_input(
-                "Cell peak name",
-                value="Cells",
-                key="peak_name_cell",
-                help="Display label for the cell peak (larger). Lysis% is always reported for this peak.",
-            )
-
-            st.checkbox(
-                "Relax peak-width constraints (broad / overlapping peaks)",
-                value=False,
-                key="relax_widths",
-                help=(
-                    "Off (default): use the standard tight peak-width bounds. "
-                    "Turn this on for instruments/data where peaks sit broader than "
-                    "the defaults expect (typical symptom: the fit is sharper/narrower "
-                    "than the data and R² is poor). When on, a tight fit is tried first "
-                    "and the widths are only relaxed if that fit scores below R²=0.92, "
-                    "so clean traces are left unchanged."
-                ),
-            )
-
-            model_options = (
-                "gaussian",
-                "lognormal",
-                "splitgaussian",
-                "gennormal",
-                "autofit",
-            )
-            default_model = st.session_state.get("model", "autofit")
-            default_index = (
-                model_options.index(default_model)
-                if default_model in model_options
-                else 0
-            )
-            model = st.radio(
-                "Peak model",
-                model_options,
-                index=default_index,
-                key="model",
-            )
-            compare_models = model == "autofit"
 
             with st.expander("Advanced fitting settings", expanded=False):
                 sensitivity = st.select_slider(

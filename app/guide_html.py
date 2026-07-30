@@ -375,6 +375,21 @@ that is justified by the data:</p>
 <p>Drop <code>.dat</code> exports. Use the <em>Traces to analyze</em> selector on
 the main page to focus on a subset.</p>
 
+<h3>Peaks &amp; Sample</h3>
+<ul>
+  <li><strong>Peak labels</strong> — rename the two components (e.g.
+  <em>debris</em>, <em>aggregates</em>) for separation samples. Names appear in
+  the plots, the results table and the downloads. Lysis % is always calculated
+  for the <em>Cell</em> peak.</li>
+  <li><strong>IB / Cell target size (µm)</strong> — expected peak centres
+  (defaults 0.48 / 0.85). <strong>Adjust these to where your peaks actually
+  sit.</strong> The fit may shift each peak within the <em>Allowed peak shift</em>
+  window.</li>
+  <li><strong>Limit particle-size range</strong> — restrict the fit to a size
+  window (default 0.2–1.2 µm). Keep this on to ignore large debris outside the
+  range of interest.</li>
+</ul>
+
 <h3>Data Preprocessing</h3>
 <ul>
   <li><strong>Baseline subtraction</strong> — removes a constant/edge offset.
@@ -383,34 +398,10 @@ the main page to focus on a subset.</p>
   <li><strong>Normalize data</strong> — scales every trace to its own maximum.
   Use this to compare samples of different concentration. Units become
   <em>relative weight</em> rather than µg.</li>
-  <li><strong>Limit particle-size range</strong> — restrict the fit to a size
-  window (default 0.2–1.2 µm). Keep this on to ignore large debris outside the
-  range of interest.</li>
 </ul>
 
-<h3>Model Settings — Peak detection</h3>
+<h3>Fitting</h3>
 <ul>
-  <li><strong>Automatic</strong> (default): resolved peaks first, overlap
-  deconvolution only if a shoulder is detected.</li>
-  <li><strong>Resolved peaks only</strong>: stricter — needs a clear second
-  maximum.</li>
-  <li><strong>Allow overlapping peaks</strong>: forces overlap deconvolution on.</li>
-  <li><strong>Single peak only</strong>: disables the two-peak fit entirely.</li>
-</ul>
-
-<h3>Model Settings — Peak parameters</h3>
-<ul>
-  <li><strong>IB / Cell target size (µm)</strong> — expected peak centres
-  (defaults 0.48 / 0.85). <strong>Adjust these to where your peaks actually
-  sit.</strong> The fit may shift each peak within the <em>Allowed peak shift</em>
-  window.</li>
-  <li><strong>Peak labels</strong> — rename the two components (e.g.
-  <em>debris</em>, <em>aggregates</em>) for separation samples. Names appear in
-  the plots, the results table and the downloads. Lysis % is always calculated
-  for the <em>Cell</em> peak.</li>
-  <li><strong>Relax peak-width constraints</strong> — for genuinely broad peaks
-  (see Example D). A tight fit is tried first; widths are relaxed only if R² is
-  poor, so clean traces are unaffected.</li>
   <li><strong>Peak model</strong> — the shape each peak is fitted with.
   <em>autofit</em> (recommended) tries all four and keeps the best R²; or pick one
   for both peaks, or a different model per peak:
@@ -426,9 +417,22 @@ the main page to focus on a subset.</p>
     flattening, so autofit uses it cautiously.</li>
   </ul>
   </li>
+  <li><strong>Relax peak-width constraints</strong> — for genuinely broad peaks
+  (see Example D). A tight fit is tried first; widths are relaxed only if R² is
+  poor, so clean traces are unaffected.</li>
+  <li><strong>Peak detection</strong>:
+  <ul>
+    <li><strong>Automatic</strong> (default): resolved peaks first, overlap
+    deconvolution only if a shoulder is detected.</li>
+    <li><strong>Resolved peaks only</strong>: stricter — needs a clear second
+    maximum.</li>
+    <li><strong>Allow overlapping peaks</strong>: forces overlap deconvolution on.</li>
+    <li><strong>Single peak only</strong>: disables the two-peak fit entirely.</li>
+  </ul>
+  </li>
 </ul>
 
-<h3>Model Settings — Advanced</h3>
+<h3>Fitting — Advanced</h3>
 <p><strong>Sensitivity</strong> presets (Low / Medium / High) set the 2-peak
 gates together. <em>Custom</em> exposes them individually:</p>
 <table>
@@ -469,13 +473,19 @@ logarithmic size axis (display only — the fit always runs in linear µm).</p>
 top-right) → <em>Settings</em> → <em>Theme</em> (light, dark, or follow system).</p>
 
 <h2 id="results">Reading the results</h2>
+<p>The <strong>Results Table</strong> tab shows two tables: <strong>Results</strong>
+(lysis efficiency and the peak positions, widths and areas it derives from) and
+<strong>Diagnostics</strong> (how reliable each fit is). Lysis efficiency leads the
+Results table.</p>
 <table>
   <tr><th>Column</th><th>Meaning</th></tr>
   <tr><td><code>fit_kind</code></td><td>one / two / overlap — how many peaks were fitted.</td></tr>
   <tr><td><code>lysis_efficiency</code></td><td>1 − cell area ÷ total area. The headline number.</td></tr>
   <tr><td><code>intact_fraction</code></td><td>cell area ÷ total area (= 1 − lysis).</td></tr>
   <tr><td><code>area_cells</code> / <code>area_inclusion_bodies</code></td><td>Integrated area of each component.</td></tr>
+  <tr><td><code>area_total</code></td><td>Sum of the two component areas.</td></tr>
   <tr><td><code>mean_cell_µm</code> / <code>mean_ib_µm</code></td><td>Mean particle size of each component.</td></tr>
+  <tr><td><code>fwhm_cell_µm</code> / <code>fwhm_ib_µm</code></td><td>Full-width-at-half-maximum (peak width) of each component. A surprisingly narrow width can flag an over-tight fit — try <em>Relax peak-width constraints</em>.</td></tr>
   <tr><td><code>r_squared</code></td><td>Goodness of fit. 🟢 ≥0.95 · 🟡 ≥0.90 · 🟠 ≥0.80 · 🔴 &lt;0.80.</td></tr>
   <tr><td><code>area_robustness</code></td><td>Overlap fits only: <em>stable / moderate / uncertain</em> — how much the cell-area estimate moves when overlap settings vary.</td></tr>
   <tr><td><code>shoulder_verdict</code></td><td>Objective second-component check: <span class="tag">shoulder</span> (a second component is detected), <span class="tag">none</span> (clean single peak), <span class="tag">indeterminate</span> (near the detection limit), <span class="tag">n/a</span> (dominant peak at/after the cell target, or trace not evaluable).</td></tr>
