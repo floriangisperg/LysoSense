@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from typing import (
     Callable,
@@ -18,7 +19,7 @@ from typing import (
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 from scipy.stats import gennorm, lognorm, norm
 
 from .io import Measurement
@@ -51,6 +52,29 @@ def _params_per_peak(model: ModelType) -> int:
     if model in ("splitgaussian", "gennormal"):
         return 4
     return 3
+
+
+# --- Shoulder-detection diagnostic (objective, independent of fit_kind) ---
+# Two shape-light tests combined into a graded verdict:
+#   * a right-tail 2nd-derivative (curvature) minimum that survives a smoothing
+#     sweep -> structural evidence of a second component;
+#   * a single-lognormal tail-extrapolation excess (in noise sigma) -> magnitude.
+# Verdict: 'shoulder' (stable curvature min AND excess >= _SHOULDER_EXCESS_STRONG),
+# 'none' (no stable curvature min AND excess < _SHOULDER_EXCESS_CLEAN), else
+# 'indeterminate'. Windows are derived from the dominant peak + mu_cell so the
+# diagnostic is strain-agnostic (HMS mu_cell=1.0, BL21 mu_cell=0.85).
+_SHOULDER_SMOOTH_SWEEP_UM: Tuple[float, ...] = (0.02, 0.03, 0.04, 0.05, 0.06)
+_SHOULDER_STABLE_LEVELS = 3  # min smoothing levels a curvature minimum must survive
+_SHOULDER_EXCESS_STRONG = 1.5  # >= this with stable curvature => shoulder
+_SHOULDER_EXCESS_CLEAN = 1.0  # < this without stable curvature => none
+# Region/offset constants (um) used to localise the right tail around mu_cell.
+_SHOULDER_FIT_LEFT_UM = 0.24  # single-peak fit window starts this far left of main peak
+_SHOULDER_FIT_RIGHT_UM = 0.07  # ... and ends this far right of it (left side + top only)
+_SHOULDER_TAIL_LEFT_UM = 0.18  # tail-excess window starts this far left of mu_cell
+_SHOULDER_TAIL_RIGHT_UM = 0.10  # ... and ends this far right of mu_cell
+_SHOULDER_REGION_LEFT_UM = 0.24  # curvature region starts this far left of main peak
+_SHOULDER_REGION_RIGHT_UM = 0.15  # ... and ends this far right of mu_cell
+_SHOULDER_SEARCH_PAD_UM = 0.09  # right-tail curvature minima must be > main peak + this
 _MIN_RELIABLE_SIGMA = 0.015  # �m; narrower hints are considered noise
 
 
@@ -487,6 +511,118 @@ def _check_second_peak_quality(
     return True, "OK"
 
 
+def _lognormal_tail_excess(
+    x: np.ndarray,
+    y: np.ndarray,
+    fit_mask: np.ndarray,
+    tail_mask: np.ndarray,
+) -> float:
+    """Excess of the real right tail over a single-lognormal prediction, in noise sigma.
+
+    A single lognormal is fit on the dominant peak's left side + top (``fit_mask``)
+    and extrapolated into the right tail (``tail_mask``); the largest positive
+    residual there, scaled by the fit's MAD noise, is returned. NaN if the fit fails.
+    A lognormal is used (not a flexible model) because flexible models extrapolate
+    wildy and would mask the very shoulder we are testing for.
+    """
+    xf, yf = x[fit_mask], y[fit_mask]
+    xt, yt = x[tail_mask], y[tail_mask]
+
+    def lnorm(xi: np.ndarray, amp: float, mode: float, shape: float, baseline: float) -> np.ndarray:
+        return np.asarray(
+            amp * lognorm.pdf(xi, shape, scale=mode * np.exp(shape * shape)) + baseline
+        )
+
+    p0 = (
+        max(float(yf.max()), 1e-6),
+        float(xf[int(np.argmax(yf))]),
+        0.15,
+        float(yf.min()),
+    )
+    bounds = (
+        (0.0, float(xf.min()), 0.03, -1e6),
+        (np.inf, float(xf.max()), 0.9, max(float(yf.max()), 0.0)),
+    )
+    try:
+        popt, _ = curve_fit(lnorm, xf, yf, p0=p0, bounds=bounds, maxfev=200000)
+    except (RuntimeError, ValueError):
+        return float("nan")
+    resid = yf - lnorm(xf, *popt)
+    noise = float(np.median(np.abs(resid - np.median(resid))) * 1.4826)
+    if noise <= 0:
+        noise = 1e-9
+    return float(np.maximum(yt - lnorm(xt, *popt), 0.0).max() / noise)
+
+
+def _detect_shoulder(
+    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+) -> Dict[str, float | str | None]:
+    """Objective, model-light shoulder diagnostic, independent of ``fit_kind``.
+
+    Combines a right-tail curvature minimum that survives a smoothing sweep
+    (structural evidence of a second component) with a single-lognormal
+    tail-extrapolation excess (its magnitude). Returns ``shoulder_verdict`` and
+    ``shoulder_excess_sigma`` for the metrics dict.
+
+    Returns ``'n/a'`` when the dominant peak already sits at/after the cell target
+    (e.g. pre-homogenisation, cell-only traces) so no shoulder can be defined, or
+    when the data is too short / the fit fails.
+    """
+    na: Dict[str, float | str | None] = {
+        "shoulder_verdict": "n/a",
+        "shoulder_excess_sigma": float("nan"),
+    }
+    if x.size < 30:
+        return na
+
+    mu_cell = opts.mu_cell_um
+    main_mu = float(x[int(np.argmax(y))])
+    # The dominant peak must sit in the expected IB region (between the IB lower
+    # bound and the cell target) for an IB-peak-plus-cell-shoulder to be
+    # meaningful. A peak at the low-size debris edge (e.g. out-of-framework
+    # refold/solution samples whose max lands at the clip boundary) or at/after
+    # the cell target (e.g. pre-homogenisation cell-only traces) -> not applicable.
+    ib_lo = opts.mu_ib_um * (1.0 - opts.allow_shift_fraction)
+    if main_mu < ib_lo or main_mu >= mu_cell - 0.05:
+        return na
+
+    fit_mask = (x >= main_mu - _SHOULDER_FIT_LEFT_UM) & (x <= main_mu + _SHOULDER_FIT_RIGHT_UM)
+    tail_mask = (x >= mu_cell - _SHOULDER_TAIL_LEFT_UM) & (x <= mu_cell + _SHOULDER_TAIL_RIGHT_UM)
+    if np.count_nonzero(fit_mask) < 8 or np.count_nonzero(tail_mask) < 4:
+        return na
+
+    # --- right-tail curvature minima, stable across a smoothing sweep ---
+    region = (x >= main_mu - _SHOULDER_REGION_LEFT_UM) & (x <= mu_cell + _SHOULDER_REGION_RIGHT_UM)
+    xr, yr = x[region], y[region]
+    dx = float(np.median(np.diff(xr))) if xr.size > 1 else 1e-3
+    search_lo = main_mu + _SHOULDER_SEARCH_PAD_UM
+    levels_with_min = 0
+    for win_um in _SHOULDER_SMOOTH_SWEEP_UM:
+        win = min(max(int(round(win_um / dx)) | 1, 5), (xr.size // 2) * 2 + 1)
+        if win >= xr.size or win < 5:
+            continue
+        d2 = savgol_filter(yr, win, 3, deriv=2, delta=dx)
+        neg = -d2
+        if neg.max() <= 0:
+            continue
+        peaks, _ = find_peaks(neg, prominence=0.1 * neg.max(), distance=max(1, int(0.06 / dx)))
+        if any(xr[i] > search_lo for i in peaks):
+            levels_with_min += 1
+    stable_curvature = levels_with_min >= _SHOULDER_STABLE_LEVELS
+
+    excess_sigma = _lognormal_tail_excess(x, y, fit_mask, tail_mask)
+    if math.isnan(excess_sigma):
+        return na
+
+    if stable_curvature and excess_sigma >= _SHOULDER_EXCESS_STRONG:
+        verdict: str = "shoulder"
+    elif (not stable_curvature) and excess_sigma < _SHOULDER_EXCESS_CLEAN:
+        verdict = "none"
+    else:
+        verdict = "indeterminate"
+    return {"shoulder_verdict": verdict, "shoulder_excess_sigma": float(excess_sigma)}
+
+
 def analyze_measurement(
     measurement: Measurement, options: AnalysisOptions | None = None
 ) -> AnalysisResult:
@@ -502,6 +638,7 @@ def analyze_measurement(
     observed = _augment_observed(df, x, fitres, opts)
     dense_fit = _build_dense_frame(x, fitres, opts)
     metrics = _derive_metrics(x, fitres, opts)
+    metrics.update(_detect_shoulder(x, y, opts))
 
     return AnalysisResult(
         measurement=measurement,
