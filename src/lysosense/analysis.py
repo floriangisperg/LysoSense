@@ -691,10 +691,14 @@ def _derive_metrics(
     model_cell = fitres.get("model_cell", opts.get_model_cell())
     if fitres["kind"] in ("two", "overlap"):
         n1 = _params_per_peak(model_ib)
-        mean1 = _mean_from_params(model_ib, fitres["popt"][:n1])
-        mean2 = _mean_from_params(model_cell, fitres["popt"][n1:])
+        params1 = fitres["popt"][:n1]
+        params2 = fitres["popt"][n1:]
+        mean1 = _mean_from_params(model_ib, params1)
+        mean2 = _mean_from_params(model_cell, params2)
+        fwhm1 = _calculate_fwhm_from_params(model_ib, params1)
+        fwhm2 = _calculate_fwhm_from_params(model_cell, params2)
         # Decide which component is intact cells by peak position (mode); the
-        # reported mean is then taken from the chosen component's parameters.
+        # reported mean/width is then taken from the chosen component's params.
         m1 = float(fitres["popt"][1])
         m2 = float(fitres["popt"][n1 + 1])
         cell_first = fitres.get("cell_first")
@@ -702,14 +706,20 @@ def _derive_metrics(
             cell_first = _cell_component_first(m1, m2, opts)
         m_cell = float(mean1 if cell_first else mean2)
         m_ib = float(mean2 if cell_first else mean1)
+        fwhm_cell = float(fwhm1 if cell_first else fwhm2)
+        fwhm_ib = float(fwhm2 if cell_first else fwhm1)
     else:
         single_component = fitres.get("single_component") or "ib"
         if single_component == "cell":
             m_cell = float(_mean_from_params(model_cell, fitres["popt"]))
+            fwhm_cell = float(_calculate_fwhm_from_params(model_cell, fitres["popt"]))
             m_ib = None
+            fwhm_ib = None
         else:
             m_ib = float(_mean_from_params(model_ib, fitres["popt"]))
+            fwhm_ib = float(_calculate_fwhm_from_params(model_ib, fitres["popt"]))
             m_cell = None
+            fwhm_cell = None
 
     intact_fraction = float(area_cells / area_total)
     lysis_eff = float(1.0 - intact_fraction)
@@ -724,6 +734,8 @@ def _derive_metrics(
         "lysis_efficiency": lysis_eff,
         "mean_cell_µm": m_cell,
         "mean_ib_µm": m_ib,
+        "fwhm_cell_µm": fwhm_cell,
+        "fwhm_ib_µm": fwhm_ib,
     }
     if fitres["kind"] == "overlap":
         metrics.update(

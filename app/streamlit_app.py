@@ -1648,56 +1648,63 @@ def _render_metrics(
 
     summary = pd.DataFrame(records).set_index("measurement")
 
-    # Reorder columns for better readability
-    column_order = [
-        "model",
-        "fit_kind",
-        "baseline_corrected",
-        "normalized",
-        "r_squared",
-        "fit_quality",
-        "shoulder_verdict",
-        "shoulder_excess_sigma",
-        "area_robustness",
-        "area_cells",
-        "area_inclusion_bodies",
-        "area_total",
-        "intact_fraction",
-        "lysis_efficiency",
-        "mean_cell_µm",
-        "mean_ib_µm",
-    ]
-
-    # Only include columns that exist
-    existing_columns = [col for col in column_order if col in summary.columns]
-    other_columns = [col for col in summary.columns if col not in column_order]
-    final_columns = existing_columns + other_columns
-
-    summary = summary[final_columns]
-
     # Surface the user-supplied peak names in the display + export headers.
     # Internal metric keys are left untouched (they are asserted in the test
     # suite); only this display/export frame is renamed.
+    mean_cell_col = f"mean {peak_name_cell} (µm)"
+    mean_ib_col = f"mean {peak_name_ib} (µm)"
+    fwhm_cell_col = f"fwhm {peak_name_cell} (µm)"
+    fwhm_ib_col = f"fwhm {peak_name_ib} (µm)"
+    area_cell_col = f"area ({peak_name_cell})"
+    area_ib_col = f"area ({peak_name_ib})"
     summary = summary.rename(
         columns={
-            "area_cells": f"area ({peak_name_cell})",
-            "area_inclusion_bodies": f"area ({peak_name_ib})",
-            "mean_cell_µm": f"mean {peak_name_cell} (µm)",
-            "mean_ib_µm": f"mean {peak_name_ib} (µm)",
+            "area_cells": area_cell_col,
+            "area_inclusion_bodies": area_ib_col,
+            "mean_cell_µm": mean_cell_col,
+            "mean_ib_µm": mean_ib_col,
+            "fwhm_cell_µm": fwhm_cell_col,
+            "fwhm_ib_µm": fwhm_ib_col,
         }
     )
 
-    st.subheader("Relative abundance and lysis efficiency")
-    numeric_cols = summary.select_dtypes(include="number").columns
+    # Split the metrics into a Results table (the answer — lysis and the peak
+    # characteristics it derives from) and a Diagnostics table (how reliable the
+    # fit is). Lysis efficiency leads the Results table so it is the first thing
+    # the eye lands on, instead of buried at the far right of one wide table.
+    results_cols = [
+        "lysis_efficiency",
+        "intact_fraction",
+        "fit_kind",
+        mean_cell_col,
+        mean_ib_col,
+        fwhm_cell_col,
+        fwhm_ib_col,
+        area_cell_col,
+        area_ib_col,
+        "area_total",
+    ]
+    diagnostics_cols = [
+        "r_squared",
+        "fit_quality",
+        "model",
+        "shoulder_verdict",
+        "shoulder_excess_sigma",
+        "area_robustness",
+        "baseline_corrected",
+        "normalized",
+    ]
 
-    # Custom formatters
-    formatters: Dict[str, str] = {col: "{:.4g}" for col in numeric_cols if col != "r_squared"}
-    formatters["r_squared"] = "{:.4f}"
+    results_cols = [c for c in results_cols if c in summary.columns]
+    diagnostics_cols = [c for c in diagnostics_cols if c in summary.columns]
 
-    # Style the dataframe with conditional formatting for fit quality
-    styled_summary = summary.style.format(formatters)  # type: ignore[arg-type]
+    # The exported frame keeps every column, Results first then Diagnostics, so
+    # the XLSX reads the same way as the app (lysis up front).
+    summary = summary[results_cols + diagnostics_cols]
 
-    # Add color coding for R² values
+    results_df = summary[results_cols]
+    diagnostics_df = summary[diagnostics_cols]
+
     def highlight_r_squared(val: float) -> str:
         if val >= 0.95:
             return "background-color: #d4edda"  # Green - excellent
@@ -1708,18 +1715,49 @@ def _render_metrics(
         else:
             return "background-color: #f5c6cb"  # Dark red - poor
 
-    styled_summary = styled_summary.map(highlight_r_squared, subset=["r_squared"])  # type: ignore[arg-type]
+    # --- Results table: the answer, lysis first ---
+    st.subheader("Results")
+    st.caption(
+        "Lysis efficiency and the peak positions, widths and areas it is derived "
+        "from. `fit_kind` is one / two / overlap — a one-peak fit forces lysis "
+        "to 0% or 100%."
+    )
+    results_numeric = results_df.select_dtypes(include="number").columns
+    results_formatters: Dict[str, str] = {
+        col: "{:.4g}"
+        for col in results_numeric
+        if col not in ("lysis_efficiency", "intact_fraction")
+    }
+    if "lysis_efficiency" in results_df.columns:
+        results_formatters["lysis_efficiency"] = "{:.1%}"
+    if "intact_fraction" in results_df.columns:
+        results_formatters["intact_fraction"] = "{:.1%}"
+    st.dataframe(
+        results_df.style.format(results_formatters, na_rep="—"),  # type: ignore[arg-type]
+        width="stretch",
+    )
 
-    st.dataframe(styled_summary, width="stretch")
+    # --- Diagnostics table: fit quality + reliability ---
+    st.subheader("Diagnostics")
+    st.caption(
+        "Fit quality and reliability indicators. Use these to judge how much to "
+        "trust the results above before interpreting lysis efficiency."
+    )
+    diag_numeric = diagnostics_df.select_dtypes(include="number").columns
+    diag_formatters: Dict[str, str] = {
+        col: "{:.4g}" for col in diag_numeric if col != "r_squared"
+    }
+    if "r_squared" in diagnostics_df.columns:
+        diag_formatters["r_squared"] = "{:.4f}"
+    styled_diag = diagnostics_df.style.format(diag_formatters, na_rep="—")  # type: ignore[arg-type]
+    if "r_squared" in diagnostics_df.columns:
+        styled_diag = styled_diag.map(highlight_r_squared, subset=["r_squared"])  # type: ignore[arg-type]
+    st.dataframe(styled_diag, width="stretch")
 
-    # Add fit quality legend
-    st.markdown("""
-    **Fit Quality Legend:**
-    - 🟢 R² ≥ 0.95: Excellent fit
-    - 🟡 R² ≥ 0.90: Good fit
-    - 🟠 R² ≥ 0.80: Fair fit
-    - 🔴 R² < 0.80: Poor fit
-    """)
+    st.markdown(
+        "**R² legend:** 🟢 ≥ 0.95 excellent · 🟡 ≥ 0.90 good · "
+        "🟠 ≥ 0.80 fair · 🔴 < 0.80 poor"
+    )
 
     return summary.reset_index()
 
