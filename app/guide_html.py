@@ -149,6 +149,38 @@ def _fig_not_evaluable(rng: np.random.Generator) -> go.Figure:
     return fig
 
 
+def _fig_shoulder_clear(rng: np.random.Generator) -> go.Figure:
+    """A detectable shoulder: the cell region sits above the single-peak prediction."""
+    x = np.linspace(0.2, 1.2, 400)
+    ib = _peak(x, 1.0, 0.70, 0.08)
+    cell = _peak(x, 0.32, 0.95, 0.07)  # shoulder riding on the IB right tail
+    raw = _noisy(ib + cell, 0.012, rng)
+    single = _peak(x, 1.0, 0.70, 0.08)  # what one peak (IB only) predicts
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(
+        go.Scatter(x=x, y=single, name="Single-peak prediction", line=dict(color=_TIGHT_COLOR, width=2.5, dash="dash"))
+    )
+    fig.add_trace(
+        go.Scatter(x=x, y=cell, name="Shoulder (excess)", line=dict(color=_CELL_COLOR, width=2))
+    )
+    return _base_layout(fig, "G · A detectable shoulder")
+
+
+def _fig_shoulder_hidden(rng: np.random.Generator) -> go.Figure:
+    """No detectable shoulder: the right tail matches one peak within the noise."""
+    x = np.linspace(0.2, 1.2, 400)
+    ib = _peak(x, 1.0, 0.70, 0.11)  # broader single peak whose tail reaches the cell region
+    raw = _noisy(ib, 0.012, rng)
+    single = _peak(x, 1.0, 0.70, 0.11)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(
+        go.Scatter(x=x, y=single, name="Single-peak prediction", line=dict(color=_FIT_COLOR, width=2.5, dash="dash"))
+    )
+    return _base_layout(fig, "H · No detectable shoulder (below the limit)")
+
+
 def _build_figures() -> Dict[str, str]:
     """Return ``{figure_id: plotly div+script snippet}`` for the guide."""
     rng = np.random.default_rng(20260729)
@@ -159,6 +191,8 @@ def _build_figures() -> Dict[str, str]:
         "broad": _fig_broad(rng),
         "lone_cell": _fig_lone_cell(rng),
         "bad": _fig_not_evaluable(rng),
+        "shoulder_clear": _fig_shoulder_clear(rng),
+        "shoulder_hidden": _fig_shoulder_hidden(rng),
     }
     snippets: Dict[str, str] = {}
     for fid, fig in figures.items():
@@ -483,6 +517,21 @@ closer the two populations, the more the cell shoulder sits right on the IB peak
 small changes in the model or the noise move the split substantially. When your IB and cell targets are
 close (common for some strains), treat late-cycle / small-shoulder lysis numbers as approximate and report
 the <em>trend</em> across cycles rather than a single precise value.</p>
+
+<h3>What a shoulder looks like — and when it's below the limit</h3>
+<p>The shoulder check separates two situations that are easy to confuse by eye:</p>
+{{FIGURE:shoulder_clear}}
+<figcaption>Fig. G — <strong>A detectable shoulder.</strong> In the cell region the raw
+data (grey) rises clearly above the single-peak prediction (red dashed); that excess
+(green) is the second population. Verdict: <span class="tag">shoulder</span>.</figcaption>
+{{FIGURE:shoulder_hidden}}
+<figcaption>Fig. H — <strong>No detectable shoulder.</strong> The right tail is fully
+consistent with a single peak — the prediction tracks the data within the noise, so
+there is no excess to flag. There <em>could</em> still be a small shoulder buried in
+the noise; we simply can't tell, so the verdict is <span class="tag">none</span> (or
+<span class="tag">indeterminate</span>) — meaning "below the detection limit", not
+"definitely zero". This is exactly the late-cycle situation: report the trend across
+samples, not a precise residual from a single trace.</figcaption>
 
 <h2 id="examples">Worked examples</h2>
 <div class="note">The traces below are <strong>synthetic illustrations</strong>
