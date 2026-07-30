@@ -11,10 +11,18 @@ to import ``datetime`` or touch the clock at import time.
 
 from __future__ import annotations
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # (version, date, [human-readable change bullets]) — newest release first.
 CHANGELOG: list[tuple[str, str, list[str]]] = [
+    (
+        "1.3.0",
+        "2026-07-30",
+        [
+            "Objective shoulder-detection diagnostic: each fit now reports a shoulder verdict (shoulder / none / indeterminate / n/a) and an excess-σ confidence in the run summary, results table, and XLSX exports.",
+            "User guide expanded: how to read the shoulder columns, why shoulder/overlap fits are uncertain, and documentation of every sidebar control (peak-model shapes and overlap-deconvolution settings).",
+        ],
+    ),
     (
         "1.2.0",
         "2026-07-29",

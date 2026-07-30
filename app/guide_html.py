@@ -239,6 +239,7 @@ work in the app.</em></p>
     <li>Step-by-step workflow</li>
     <li>Sidebar reference</li>
     <li>Reading the results</li>
+    <li>Why shoulder results are uncertain</li>
     <li>Worked examples</li>
     <li>Tips, gotchas &amp; FAQ</li>
     <li>Troubleshooting</li>
@@ -376,9 +377,21 @@ the main page to focus on a subset.</p>
   <li><strong>Relax peak-width constraints</strong> — for genuinely broad peaks
   (see Example D). A tight fit is tried first; widths are relaxed only if R² is
   poor, so clean traces are unaffected.</li>
-  <li><strong>Peak model</strong> — <em>autofit</em> (recommended) tries
-  gaussian / lognormal / splitgaussian / gennormal and keeps the best; or pick
-  one, or a different model per peak.</li>
+  <li><strong>Peak model</strong> — the shape each peak is fitted with.
+  <em>autofit</em> (recommended) tries all four and keeps the best R²; or pick one
+  for both peaks, or a different model per peak:
+  <ul>
+    <li><strong>gaussian</strong> — symmetric bell. Simplest; often too stiff for
+    real (skewed) DCS peaks.</li>
+    <li><strong>lognormal</strong> — asymmetric; the natural shape for particle-size
+    distributions and a good single default.</li>
+    <li><strong>splitgaussian</strong> — different width on each side of the peak;
+    flexible, can absorb a shoulder.</li>
+    <li><strong>gennormal</strong> — generalized normal with a tunable top (flat to
+    sharp); the most flexible — and the most prone to hiding a real shoulder by
+    flattening, so autofit uses it cautiously.</li>
+  </ul>
+  </li>
 </ul>
 
 <h3>Model Settings — Advanced</h3>
@@ -398,6 +411,22 @@ gates together. <em>Custom</em> exposes them individually:</p>
 <em>Peak-top weighting</em> (0 = ordinary least squares; higher gives high-signal
 points more influence).</p>
 
+<h3>Overlap deconvolution (Advanced)</h3>
+<p>These only matter when a second peak is fit as a <em>shoulder</em> (no maximum of
+its own) via overlap deconvolution. They constrain that split:</p>
+<ul>
+  <li><strong>Cell center shift (%)</strong> — how far the cell peak's centre may move
+  around the <em>Cell target size</em> during the overlap fit.</li>
+  <li><strong>Max overlap IB / cell FWHM (µm)</strong> — the widest each peak is allowed
+  to be in the overlap fit (stops the deconvolution from spreading unrealistically).</li>
+  <li><strong>Min overlap cell area (%)</strong> — the smallest cell area below which an
+  overlap split is rejected as negligible.</li>
+</ul>
+<p>Because shoulder fits are inherently uncertain (see
+<a href="#shoulder-uncertain">Why shoulder results are uncertain</a>), the
+<code>area_robustness</code> tag tells you how much the cell‑area answer moves when
+these settings vary.</p>
+
 <h3>Visualization</h3>
 <p><strong>View mode:</strong> Combined (raw + fit + components), Fit Overview
 (components only), or Raw Data Only. Toggle the fit envelope, components, and a
@@ -415,11 +444,45 @@ top-right) → <em>Settings</em> → <em>Theme</em> (light, dark, or follow syst
   <tr><td><code>mean_cell_µm</code> / <code>mean_ib_µm</code></td><td>Mean particle size of each component.</td></tr>
   <tr><td><code>r_squared</code></td><td>Goodness of fit. 🟢 ≥0.95 · 🟡 ≥0.90 · 🟠 ≥0.80 · 🔴 &lt;0.80.</td></tr>
   <tr><td><code>area_robustness</code></td><td>Overlap fits only: <em>stable / moderate / uncertain</em> — how much the cell-area estimate moves when overlap settings vary.</td></tr>
+  <tr><td><code>shoulder_verdict</code></td><td>Objective second-component check: <span class="tag">shoulder</span> (a second component is detected), <span class="tag">none</span> (clean single peak), <span class="tag">indeterminate</span> (near the detection limit), <span class="tag">n/a</span> (dominant peak at/after the cell target, or trace not evaluable).</td></tr>
+  <tr><td><code>shoulder_excess_sigma</code></td><td>How <em>confidently</em> a shoulder is detected — the signal excess over a single-peak prediction, in noise σ. This is confidence, <strong>not</strong> shoulder size (see below).</td></tr>
 </table>
+<div class="note">
+<strong>Reading the shoulder columns:</strong> <code>shoulder_excess_sigma</code> says how
+<em>confidently</em> a second component is detected, <strong>not how big it is</strong>. The size of the
+cell population is <code>intact_fraction</code> (or <code>area_cells</code>) — a small but clean shoulder
+can score a higher σ than a large but noisy one. So judge <em>presence</em> by the verdict/σ and
+<em>magnitude</em> by the area. And <code>shoulder_verdict = none</code> means <strong>below the detection
+limit</strong>, not zero intact cells — the true residual could be anything from 0 to a few %.
+</div>
 <p>The four tabs: <strong>Overview</strong> (all traces together),
 <strong>Individual Samples</strong> (one plot per sample),
 <strong>Results Table</strong> (the metrics), and
 <strong>Detailed Information</strong> (metadata + raw numbers).</p>
+
+<h2 id="shoulder-uncertain">Why shoulder (overlap) results are uncertain</h2>
+<p>A <strong>resolved</strong> second peak has its own maximum, so its position, height and width are
+directly visible and the split is well constrained. A <strong>shoulder</strong> has no maximum of its own
+— it shows up only as a distortion of the main peak's tail — so its area has to be inferred from the
+leftover (residual) shape. That makes shoulder / overlap fits inherently less certain, which is why they
+carry an <code>area_robustness</code> tag.</p>
+<div class="warn">
+<strong>The fundamental ambiguity.</strong> An asymmetric, non-Gaussian peak can be explained two ways,
+and near the detection limit they are hard to tell apart:
+<ul>
+  <li>a <em>symmetric</em> main peak plus a small <strong>shoulder</strong> (a real second population), or</li>
+  <li>one genuinely <strong>asymmetric</strong> peak — a single non-Gaussian population with no second component.</li>
+</ul>
+The shoulder check uses an asymmetric (lognormal) single-peak reference precisely to avoid calling every
+skewed peak a shoulder — but it cannot always separate the two, so small / late-cycle shoulders stay
+genuinely ambiguous.
+</div>
+<p>This gets <strong>harder when the IB and cell sizes overlap</strong> (i.e. are close together). The
+closer the two populations, the more the cell shoulder sits right on the IB peak's tail, and the more a
+"second population" looks identical to "one skewed IB peak". There the lysis % becomes ill-conditioned —
+small changes in the model or the noise move the split substantially. When your IB and cell targets are
+close (common for some strains), treat late-cycle / small-shoulder lysis numbers as approximate and report
+the <em>trend</em> across cycles rather than a single precise value.</p>
 
 <h2 id="examples">Worked examples</h2>
 <div class="note">The traces below are <strong>synthetic illustrations</strong>
@@ -493,6 +556,10 @@ excursions; the dotted line marks zero. Not evaluable.</figcaption>
   try a different <em>Peak model</em>.</li>
   <li><strong>Uncertain overlap?</strong> Don't trust the split — report the
   total area, or change the detection mode to compare.</li>
+  <li><strong>Shoulder verdict says <em>none</em> but you expected a second peak?</strong>
+  It's below the detection limit — the leftover is indistinguishable from noise or peak
+  asymmetry. Treat the number as approximate and report the trend, or raise <em>Sensitivity</em>
+  / use <em>Allow overlapping peaks</em> to force a split and see how much it moves.</li>
   <li><strong>Compare concentrations?</strong> Turn on <em>Normalize data</em> so
   traces are on the same scale.</li>
   <li><strong>Separation samples?</strong> Rename the peaks (Peak labels) to what
@@ -509,6 +576,7 @@ excursions; the dotted line marks zero. Not evaluable.</figcaption>
   <tr><td>Fit is much narrower than the data, low R²</td><td>Enable <em>Relax peak-width constraints</em>.</td></tr>
   <tr><td>Expected second peak is missed</td><td>Set <em>Sensitivity → High</em>, or <em>Allow overlapping peaks</em>.</td></tr>
   <tr><td>Spurious second peak appears</td><td>Set <em>Sensitivity → Low</em>, or tighten <em>Max peak width</em>.</td></tr>
+  <tr><td>Shoulder verdict <em>none</em> but a second peak is expected</td><td>Near the detection limit — raise <em>Sensitivity</em> or <em>Allow overlapping peaks</em>; treat the number as approximate (see <em>Why shoulder results are uncertain</em>).</td></tr>
   <tr><td>Trace is negative or drifting</td><td>Not evaluable — try baseline subtraction, else exclude the sample.</td></tr>
 </table>
 
