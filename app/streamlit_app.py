@@ -18,9 +18,20 @@ _src = str(_repo_root / "src")
 if _src in sys.path:
     sys.path.remove(_src)
 sys.path.insert(0, _src)
-for _name in list(sys.modules):
-    if _name == "lysosense" or _name.startswith("lysosense."):
-        del sys.modules[_name]
+
+# Only evict an already-loaded `lysosense` when it is NOT the copy under this
+# repo's `src/` (e.g. a stale pip-installed build). Evicting unconditionally used
+# to break `st.cache_data`: every rerun re-imported the package and created *new*
+# `Measurement`/`AnalysisResult` class objects, so pickling a cached analysis
+# failed with "it's not the same object as lysosense.io.Measurement" and every
+# uploaded file errored. With a single stable class identity the cache pickles
+# and unpickles cleanly across reruns.
+import lysosense as _lysosense  # noqa: E402
+_lysosense_file = getattr(_lysosense, "__file__", None)
+if not _lysosense_file or not Path(_lysosense_file).resolve().is_relative_to(_repo_root):
+    for _name in list(sys.modules):
+        if _name == "lysosense" or _name.startswith("lysosense."):
+            del sys.modules[_name]
 
 try:
     from streamlit.runtime.uploaded_file_manager import UploadedFile  # noqa: E402
@@ -1113,11 +1124,34 @@ def _analyze_uploads(
                 model_ib_val,
                 model_cell_val,
             )
-            if warning:
-                st.warning(warning)
-            results.append((file.name, analysis))
-        except Exception as exc:
-            st.error(f"{file.name}: {exc}")
+        except Exception:
+            # ``st.cache_data`` serializes the return value, which can fail for
+            # reasons unrelated to the fit (class-identity drift after a module
+            # reload, or a value the cache simply can't pickle). Fall back to an
+            # uncached run so the user still gets a result instead of a per-file
+            # error. A genuine fit failure re-raises here and is reported below.
+            try:
+                analysis, warning = _analyze_one_upload(
+                    file.getvalue(),
+                    file.name,
+                    options,
+                    selected_model,
+                    bool(baseline_subtraction),
+                    str(baseline_method),
+                    bool(normalize_data),
+                    bool(limit_size_range),
+                    float(size_min_um),
+                    float(size_max_um),
+                    bool(use_mixed),
+                    model_ib_val,
+                    model_cell_val,
+                )
+            except Exception as exc:
+                st.error(f"{file.name}: {exc}")
+                continue
+        if warning:
+            st.warning(warning)
+        results.append((file.name, analysis))
     return results
 
 
@@ -1132,11 +1166,10 @@ def _analysis_options_from_cache_key(key: AnalysisOptionsKey) -> AnalysisOptions
     return AnalysisOptions(**dict(key))
 
 
-@st.cache_data(show_spinner=False)
-def _analyze_one_upload_cached(
+def _analyze_one_upload(
     file_bytes: bytes,
     source_name: str,
-    options_key: AnalysisOptionsKey,
+    options: AnalysisOptions,
     selected_model: str,
     baseline_subtraction: bool,
     baseline_method: str,
@@ -1148,7 +1181,11 @@ def _analyze_one_upload_cached(
     model_ib_val: Optional[str],
     model_cell_val: Optional[str],
 ) -> Tuple[AnalysisResult, Optional[str]]:
-    options = _analysis_options_from_cache_key(options_key)
+    """Run one file through the full pipeline (parse -> preprocess -> fit).
+
+    Pure worker with no ``@st.cache_data`` so callers can use it directly when the
+    cache must be bypassed (see ``_analyze_uploads``'s fallback).
+    """
     measurement = parse_dat_bytes(file_bytes, source_name=source_name)
     if limit_size_range and size_min_um < size_max_um:
         measurement = clip_measurement_range(measurement, size_min_um, size_max_um)
@@ -1171,6 +1208,40 @@ def _analyze_one_upload_cached(
         model_cell_val,
     )
     return analysis, warning
+
+
+@st.cache_data(show_spinner=False)
+def _analyze_one_upload_cached(
+    file_bytes: bytes,
+    source_name: str,
+    options_key: AnalysisOptionsKey,
+    selected_model: str,
+    baseline_subtraction: bool,
+    baseline_method: str,
+    normalize_data: bool,
+    limit_size_range: bool,
+    size_min_um: float,
+    size_max_um: float,
+    use_mixed: bool,
+    model_ib_val: Optional[str],
+    model_cell_val: Optional[str],
+) -> Tuple[AnalysisResult, Optional[str]]:
+    options = _analysis_options_from_cache_key(options_key)
+    return _analyze_one_upload(
+        file_bytes,
+        source_name,
+        options,
+        selected_model,
+        baseline_subtraction,
+        baseline_method,
+        normalize_data,
+        limit_size_range,
+        size_min_um,
+        size_max_um,
+        use_mixed,
+        model_ib_val,
+        model_cell_val,
+    )
 
 
 def _fit_measurement_from_ui_options(
