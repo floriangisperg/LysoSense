@@ -50,6 +50,14 @@ from lysosense import (  # noqa: E402
     subtract_baseline,
 )
 from lysosense._version import CHANGELOG, __version__  # noqa: E402
+from lysosense.analysis import (  # noqa: E402
+    _ALL_MODELS,
+    _FitSnapshot,
+    _analyze_fit_only,
+    _build_precomputed_hints,
+    _finalize,
+    _parallel_map,
+)
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -1253,56 +1261,7 @@ def _fit_measurement_from_ui_options(
     model_cell_val: Optional[str],
 ) -> AnalysisResult:
     if selected_model == "autofit":
-        model_types: list[str] = [
-            "gaussian",
-            "lognormal",
-            "splitgaussian",
-            "gennormal",
-        ]
-        best_r2 = -float("inf")
-        best_residual_score = float("inf")
-        best_result: AnalysisResult | None = None
-        r2_tie_tolerance = 5e-4
-
-        for model_ib in model_types:
-            for model_cell in model_types:
-                try:
-                    result = analyze_measurement(
-                        measurement,
-                        replace(
-                            options,
-                            model="gaussian",
-                            model_ib=model_ib,  # type: ignore[arg-type]
-                            model_cell=model_cell,  # type: ignore[arg-type]
-                        ),
-                    )
-                    if result.fit_kind in ("two", "overlap"):
-                        intact_fraction = safe_float(
-                            result.metrics.get("intact_fraction"), 0.0
-                        )
-                        if result.fit_kind != "overlap" and model_ib == "gennormal":
-                            continue
-                        if (
-                            result.fit_kind != "overlap"
-                            and model_cell == "gennormal"
-                            and intact_fraction < 0.15
-                        ):
-                            continue
-                    r2 = calculate_r_squared(result)
-                    residual_score = _fit_residual_score(result)
-                    if r2 > best_r2 + r2_tie_tolerance or (
-                        abs(r2 - best_r2) <= r2_tie_tolerance
-                            and residual_score < best_residual_score
-                    ):
-                        best_r2 = r2
-                        best_residual_score = residual_score
-                        best_result = result
-                except Exception:
-                    continue
-
-        if best_result is None:
-            raise RuntimeError("All autofit attempts failed")
-        return best_result
+        return _autofit_measurement(measurement, options)
 
     actual_model = "gaussian" if selected_model == "autofit" else selected_model
     if use_mixed and model_ib_val and model_cell_val:
@@ -1320,6 +1279,89 @@ def _fit_measurement_from_ui_options(
             model_cell=None,
         )
     return analyze_measurement(measurement, actual_options)
+
+
+def _autofit_measurement(
+    measurement: Any, options: AnalysisOptions
+) -> AnalysisResult:
+    """Score every model combination (4 IB x 4 cell = 16) and keep the best by R2.
+
+    Optimized for speed without changing the result:
+      * peak hints and the 8 single-peak candidate fits are computed once and
+        reused across the grid (they are model-independent),
+      * each combo is scored from the cheap fit-only snapshot -- the dense frame,
+        full metrics and shoulder diagnostic are built only for the winner,
+      * the 16 combos run in a thread pool (scipy's curve_fit releases the GIL).
+
+    Selection is an order-dependent R2 tie-break fold, and the pool preserves
+    submission order, so the chosen winner is identical to a sequential grid.
+    """
+    df = measurement.data
+    x = df["particle_size_um"].to_numpy(dtype=float)
+    y = df["mass_signal_ug"].to_numpy(dtype=float)
+    shared = _build_precomputed_hints(x, y, options)
+
+    def _run_combo(
+        combo: Any,
+    ) -> Tuple[str, str, Optional[_FitSnapshot]]:
+        model_ib, model_cell = combo
+        try:
+            opts_i = replace(
+                options,
+                model="gaussian",
+                model_ib=model_ib,  # type: ignore[arg-type]
+                model_cell=model_cell,  # type: ignore[arg-type]
+            )
+            snapshot = _analyze_fit_only(measurement, opts_i, precomputed=shared)
+        except Exception:
+            return (model_ib, model_cell, None)
+        return (model_ib, model_cell, snapshot)
+
+    combos = [(mi, mc) for mi in _ALL_MODELS for mc in _ALL_MODELS]
+    scored = _parallel_map(_run_combo, combos)
+
+    best_r2 = -float("inf")
+    best_residual_score = float("inf")
+    best_snapshot: Optional[_FitSnapshot] = None
+    r2_tie_tolerance = 5e-4
+
+    for model_ib, model_cell, snapshot in scored:
+        if snapshot is None:
+            continue
+        fit_kind = snapshot.fitres["kind"]
+        if fit_kind in ("two", "overlap"):
+            intact_fraction = safe_float(snapshot.intact_fraction, 0.0)
+            if fit_kind != "overlap" and model_ib == "gennormal":
+                continue
+            if (
+                fit_kind != "overlap"
+                and model_cell == "gennormal"
+                and intact_fraction < 0.15
+            ):
+                continue
+        # Minimal result carrying just what the selection helpers read (the
+        # observed frame); dense_fit/metrics are placeholders, not used for ranking.
+        result = AnalysisResult(
+            measurement=measurement,
+            observed=snapshot.observed,
+            dense_fit=pd.DataFrame(),
+            metrics={"intact_fraction": snapshot.intact_fraction},
+            fit_kind=fit_kind,
+            options=snapshot.opts,
+        )
+        r2 = calculate_r_squared(result)
+        residual_score = _fit_residual_score(result)
+        if r2 > best_r2 + r2_tie_tolerance or (
+            abs(r2 - best_r2) <= r2_tie_tolerance
+            and residual_score < best_residual_score
+        ):
+            best_r2 = r2
+            best_residual_score = residual_score
+            best_snapshot = snapshot
+
+    if best_snapshot is None:
+        raise RuntimeError("All autofit attempts failed")
+    return _finalize(best_snapshot)
 
 
 def _fit_residual_score(result: AnalysisResult) -> float:

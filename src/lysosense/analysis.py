@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, fields, replace
 from typing import (
+    Any,
     Callable,
     Dict,
+    Iterable,
     List,
     Literal,
     NotRequired,
@@ -42,9 +47,22 @@ class _FitResult(TypedDict):
     overlap_cell_fraction_range: NotRequired[Optional[float]]
     overlap_area_confidence: NotRequired[Optional[str]]
     overlap_accepted_variants: NotRequired[Optional[int]]
+    # 1-peak context captured when an overlap fit is chosen, so the (expensive)
+    # 27-variant robustness sweep can be deferred to _finalize and run once on
+    # the autofit winner instead of 16x across the grid. See L1b.
+    _overlap_robustness_ctx: NotRequired[
+        Optional[Tuple[np.ndarray, float, ModelType, str]]
+    ]
 
 
 ModelType = Literal["gaussian", "lognormal", "splitgaussian", "gennormal"]
+
+_ALL_MODELS: Tuple[ModelType, ...] = (
+    "gaussian",
+    "lognormal",
+    "splitgaussian",
+    "gennormal",
+)
 
 
 def _params_per_peak(model: ModelType) -> int:
@@ -175,6 +193,25 @@ class AnalysisResult:
 
 
 @dataclass
+class _FitSnapshot:
+    """Lightweight fit result: enough to rank autofit candidates.
+
+    Holds the fit + observed frame + intact_fraction only. The expensive
+    dense frame, full metrics and shoulder diagnostic are deferred to
+    :func:`_finalize`, so autofit can score 16 model combinations cheaply and
+    only build the dense/metrics/shoulder for the single winner.
+    """
+
+    fitres: _FitResult
+    observed: pd.DataFrame
+    intact_fraction: float
+    x: np.ndarray
+    y: np.ndarray
+    opts: AnalysisOptions
+    measurement: Measurement
+
+
+@dataclass
 class _PeakHint:
     amplitude: float
     mu: float
@@ -203,6 +240,24 @@ class _SingleFitCandidate:
     popt: np.ndarray
     pcov: np.ndarray
     bic: float
+
+
+@dataclass
+class _PrecomputedHints:
+    """Model-independent preprocessing shared across an autofit model grid.
+
+    ``base_p0``/``hints`` come from a single :func:`_initial_guesses` call, and
+    ``single_candidates`` memoizes the per-(component, model) single-peak fits so
+    the 16-combo autofit grid runs 8 single-peak fits instead of 32. Every field
+    depends only on opts that are constant across an autofit grid (everything
+    except ``model``/``model_ib``/``model_cell``); ``source_opts`` records the opts
+    they were built under so consumers can refuse a stale memo.
+    """
+
+    base_p0: Tuple[float, ...]
+    hints: PeakHints
+    single_candidates: Dict[Tuple[str, ModelType], _SingleFitCandidate]
+    source_opts: AnalysisOptions
 
 
 def _fit_with_optional_weights(
@@ -627,6 +682,23 @@ def analyze_measurement(
     measurement: Measurement, options: AnalysisOptions | None = None
 ) -> AnalysisResult:
     opts = options or AnalysisOptions()
+    snapshot = _analyze_fit_only(measurement, opts)
+    return _finalize(snapshot)
+
+
+def _analyze_fit_only(
+    measurement: Measurement,
+    opts: AnalysisOptions,
+    precomputed: Optional[_PrecomputedHints] = None,
+) -> _FitSnapshot:
+    """Run the fit and build the observed frame only (cheap).
+
+    Skips the dense fit, full metrics and shoulder diagnostic — those are added
+    by :func:`_finalize`. This is enough to rank autofit candidates (R², residual
+    score, ``intact_fraction``) without paying the finalize cost for the 15 combos
+    that will be discarded. ``precomputed`` carries model-independent hints shared
+    across an autofit grid (see :func:`_build_precomputed_hints`).
+    """
     df = measurement.data.copy()
     if df.empty:
         raise ValueError("Cannot analyse an empty measurement")
@@ -634,19 +706,88 @@ def analyze_measurement(
     x = df["particle_size_um"].to_numpy(dtype=float)
     y = df["mass_signal_ug"].to_numpy(dtype=float)
 
-    fitres = _fit_curve(x, y, opts)
+    fitres = _fit_curve(x, y, opts, precomputed=precomputed)
     observed = _augment_observed(df, x, fitres, opts)
-    dense_fit = _build_dense_frame(x, fitres, opts)
-    metrics = _derive_metrics(x, fitres, opts)
-    metrics.update(_detect_shoulder(x, y, opts))
 
-    return AnalysisResult(
-        measurement=measurement,
+    # intact_fraction, bit-identical to _derive_metrics: the area comes from the
+    # very same _component_arrays that _augment_observed wrote into the observed
+    # frame (cells_component_ug / ibs_component_ug), integrated over the raw x grid.
+    area_cells = float(np.trapezoid(observed["cells_component_ug"].to_numpy(), x))
+    area_ibs = float(np.trapezoid(observed["ibs_component_ug"].to_numpy(), x))
+    intact_fraction = area_cells / max(area_cells + area_ibs, 1e-12)
+
+    return _FitSnapshot(
+        fitres=fitres,
         observed=observed,
+        intact_fraction=intact_fraction,
+        x=x,
+        y=y,
+        opts=opts,
+        measurement=measurement,
+    )
+
+
+def _build_precomputed_hints(
+    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+) -> _PrecomputedHints:
+    """Build the model-independent hints shared across an autofit grid.
+
+    Computes :func:`_initial_guesses` once and pre-populates the 8 single-peak
+    candidate fits (4 models × {ib, cell}) synchronously, so the parallel grid
+    only *reads* them — no write race between worker threads. ``source_opts`` is
+    ``opts`` so consumers can verify the memo is still valid for their opts.
+    """
+    base_p0, hints = _initial_guesses(x, y, opts)
+    precomputed = _PrecomputedHints(
+        base_p0=base_p0, hints=hints, single_candidates={}, source_opts=opts
+    )
+    for component in ("ib", "cell"):
+        for model_type in _ALL_MODELS:
+            try:
+                precomputed.single_candidates[(component, model_type)] = (
+                    _fit_single_peak_candidate(x, y, opts, hints, model_type, component)
+                )
+            except (RuntimeError, ValueError):
+                continue
+    return precomputed
+
+
+def _finalize(snapshot: _FitSnapshot) -> AnalysisResult:
+    """Build the dense fit, full metrics and shoulder diagnostic for a snapshot."""
+    fitres = snapshot.fitres
+    # Run the deferred overlap-robustness sweep (27 variant fits) exactly once,
+    # here on the finalized result, instead of 16x during an autofit grid. The
+    # 1-peak context was stashed on the overlap fitres by _fit_overlap_deconvolution.
+    if fitres["kind"] == "overlap":
+        ctx = fitres.get("_overlap_robustness_ctx")
+        if ctx is not None:
+            popt_1peak, bic_1peak, model_1peak, single_component = ctx
+            fitres.update(
+                cast(
+                    _FitResult,
+                    _estimate_overlap_area_robustness(
+                        snapshot.x,
+                        snapshot.y,
+                        snapshot.opts,
+                        fitres["hints"],
+                        popt_1peak,
+                        bic_1peak,
+                        model_1peak,
+                        cast(Literal["ib", "cell"], single_component),
+                    ),
+                )
+            )
+            fitres.pop("_overlap_robustness_ctx", None)
+    dense_fit = _build_dense_frame(snapshot.x, fitres, snapshot.opts)
+    metrics = _derive_metrics(snapshot.x, fitres, snapshot.opts)
+    metrics.update(_detect_shoulder(snapshot.x, snapshot.y, snapshot.opts))
+    return AnalysisResult(
+        measurement=snapshot.measurement,
+        observed=snapshot.observed,
         dense_fit=dense_fit,
         metrics=metrics,
         fit_kind=fitres["kind"],
-        options=opts,
+        options=snapshot.opts,
     )
 
 
@@ -872,22 +1013,16 @@ def _fit_overlap_deconvolution(
     if fitres is None:
         return None
 
-    # ``_estimate_overlap_area_robustness`` returns only the NotRequired
-    # ``overlap_*`` keys; cast so the partial dict type-checks for the merge.
-    fitres.update(
-        cast(
-            _FitResult,
-            _estimate_overlap_area_robustness(
-                x,
-                y,
-                opts,
-                hints,
-                popt_1peak,
-                bic_1peak,
-                model_1peak,
-                single_component,
-            ),
-        )
+    # The 27-variant robustness sweep only feeds *diagnostic* metrics
+    # (overlap_area_confidence, area range) — neither the fit nor autofit
+    # selection reads them. Defer it to _finalize (run once on the winner)
+    # by stashing the 1-peak context it needs. This turns 16 x 27 variant fits
+    # in an autofit grid into 27, which is the dominant win for overlap data.
+    fitres["_overlap_robustness_ctx"] = (
+        popt_1peak,
+        bic_1peak,
+        model_1peak,
+        single_component,
     )
     return fitres
 
@@ -1047,7 +1182,11 @@ def _estimate_overlap_area_robustness(
     area_cells: List[float] = []
     cell_fracs: List[float] = []
 
-    for variant_opts in _overlap_variant_options(opts):
+    # The 27 width/shift variants are independent fits; their aggregate is a
+    # min/max/range/count, so order does not matter. Run them through the shared
+    # pool — ``_parallel_map`` stays serial when already inside an autofit combo
+    # (the nesting guard) and parallelizes here in the single-model path.
+    def _variant_area(variant_opts: AnalysisOptions) -> Optional[Tuple[float, float]]:
         fitres = _fit_overlap_deconvolution_candidate(
             x,
             y,
@@ -1059,7 +1198,7 @@ def _estimate_overlap_area_robustness(
             single_component,
         )
         if fitres is None:
-            continue
+            return None
 
         comp_ib, comp_cell = _component_arrays_raw(
             x, fitres["popt"], fitres["model_ib"], fitres["model_cell"]
@@ -1067,8 +1206,13 @@ def _estimate_overlap_area_robustness(
         area_ib = float(np.trapezoid(comp_ib, x))
         area_cell = float(np.trapezoid(comp_cell, x))
         total_area = max(area_ib + area_cell, 1e-12)
-        area_cells.append(area_cell)
-        cell_fracs.append(area_cell / total_area)
+        return (area_cell, area_cell / total_area)
+
+    for res in _parallel_map(_variant_area, _overlap_variant_options(opts)):
+        if res is None:
+            continue
+        area_cells.append(res[0])
+        cell_fracs.append(res[1])
 
     if not cell_fracs:
         return {
@@ -1111,8 +1255,106 @@ def _r_squared(y: np.ndarray, y_fit: np.ndarray) -> float:
     return float(1.0 - ss_res / ss_tot)
 
 
+# --- Concurrency: GIL-released curve_fit parallelizes across cores ---
+# A single lazy ThreadPoolExecutor is shared across calls. ``_parallel_map``
+# preserves submission order (the autofit R² tie-break is an order-dependent
+# fold) and never nests: a call made from inside a worker thread runs serially,
+# so the overlap-variant sweep stays sequential inside an autofit combo. Set
+# LYSOSENSE_THREADS=1 to force serial execution (the bit-identity canary).
+
+
+def _thread_workers() -> int:
+    """Thread-pool size for fit fan-outs, via the ``LYSOSENSE_THREADS`` env var.
+
+    Defaults to 1 (serial). On typical Windows installs scipy/numpy ``curve_fit``
+    workloads run about 2x *slower* under a thread pool: each worker re-spawns BLAS
+    threads (oversubscription) and the Python model evaluation holds the GIL, so
+    the "curve_fit releases the GIL" assumption does not pay off here. Set
+    ``LYSOSENSE_THREADS=N`` (N > 1) to opt into a pool if your build releases the
+    GIL effectively (e.g. some Linux/OpenBLAS setups); the autofit grid and the
+    overlap-variant sweep then fan out across N workers.
+    """
+    raw = os.environ.get("LYSOSENSE_THREADS", "").strip()
+    if raw:
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+    return 1
+
+
+_THREAD_STATE = threading.local()
+_POOL: Optional[ThreadPoolExecutor] = None
+_POOL_LOCK = threading.Lock()
+
+
+def _get_pool() -> ThreadPoolExecutor:
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                _POOL = ThreadPoolExecutor(
+                    max_workers=_thread_workers(),
+                    thread_name_prefix="lysosense-fit",
+                )
+    return _POOL
+
+
+def _is_in_parallel() -> bool:
+    return getattr(_THREAD_STATE, "in_parallel", False)
+
+
+def _run_marked(func: Callable[[Any], Any], item: Any) -> Any:
+    _THREAD_STATE.in_parallel = True
+    try:
+        return func(item)
+    finally:
+        _THREAD_STATE.in_parallel = False
+
+
+def _parallel_map(func: Callable[[Any], Any], items: Iterable[Any]) -> List[Any]:
+    """Map ``func`` over ``items`` in a thread pool, preserving submission order.
+
+    Order matters: the autofit winner is decided by an order-dependent R² tie-break
+    fold, so results must come back in submission order regardless of completion.
+    Nested calls (a worker invoking ``_parallel_map`` again) run serially, as do
+    single-item lists and ``LYSOSENSE_THREADS=1``.
+    """
+    items_list = list(items)
+    if not items_list:
+        return []
+    if _is_in_parallel() or _thread_workers() == 1 or len(items_list) == 1:
+        return [func(item) for item in items_list]
+    pool = _get_pool()
+    futures = [pool.submit(_run_marked, func, item) for item in items_list]
+    return [fut.result() for fut in futures]
+
+
+_MODEL_OPTION_FIELDS = ("model", "model_ib", "model_cell")
+
+
+def _opts_equal_except_models(a: AnalysisOptions, b: AnalysisOptions) -> bool:
+    """True if two option sets differ at most in the peak-model fields.
+
+    The autofit grid varies only ``model``/``model_ib``/``model_cell`` across
+    combos, so a memo built under one combo stays valid for the others exactly
+    when this returns True.
+    """
+    for f in fields(a):
+        if f.name in _MODEL_OPTION_FIELDS:
+            continue
+        if getattr(a, f.name) != getattr(b, f.name):
+            return False
+    return True
+
+
 def _fit_curve(
-    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    precomputed: Optional[_PrecomputedHints] = None,
 ) -> _FitResult:
     """Fit the curve, with an optional width-relaxation fallback.
 
@@ -1123,9 +1365,13 @@ def _fit_curve(
     (broad must beat tight by ``opts.width_relax_r2_margin``). This lets genuinely
     broad shoulder peaks be fit instead of being pinned into a narrow spike, while
     leaving clean traces (whose tight fit is already good) untouched.
+
+    ``precomputed`` carries model-independent hints/candidate-fits shared across an
+    autofit grid; it only applies on the non-relax path (the width-relaxation
+    re-fit alters opts, so the model-grid memo would be stale).
     """
     if not opts.relax_peak_widths:
-        return _fit_curve_once(x, y, opts)
+        return _fit_curve_once(x, y, opts, precomputed=precomputed)
 
     tight_opts = replace(opts, relax_peak_widths=False)
     result_tight = _fit_curve_once(x, y, tight_opts)
@@ -1150,7 +1396,10 @@ def _fit_curve(
 
 
 def _fit_curve_once(
-    x: np.ndarray, y: np.ndarray, opts: AnalysisOptions
+    x: np.ndarray,
+    y: np.ndarray,
+    opts: AnalysisOptions,
+    precomputed: Optional[_PrecomputedHints] = None,
 ) -> _FitResult:
     if np.max(y) <= 0:
         raise ValueError("Signal trace contains no positive values to fit")
@@ -1158,28 +1407,46 @@ def _fit_curve_once(
     model_ib = opts.get_model_ib()
     model_cell = opts.get_model_cell()
 
-    base_p0, hints = _initial_guesses(x, y, opts)
+    # Peak hints are model-independent, so reuse the autofit grid's shared copy
+    # when it is compatible with this call's opts (memo validity gated by
+    # ``_opts_equal_except_models`` so a stale relax/FWHM memo can't leak in).
+    use_precomputed = (
+        precomputed is not None
+        and _opts_equal_except_models(precomputed.source_opts, opts)
+    )
+    if precomputed is not None and use_precomputed:
+        base_p0, hints = precomputed.base_p0, precomputed.hints
+    else:
+        base_p0, hints = _initial_guesses(x, y, opts)
     A1, mu_ib_guess, A2, mu_cell_guess = base_p0
 
     # Build initial params for single peak (IB peak)
     p1 = _single_peak_initial_params(model_ib, A1, mu_ib_guess, hints.get("ib"), opts, is_ib=True)
 
     # --- Step 1: Fit plausible 1-peak models first ---
+    # A single-peak candidate depends only on its own (component, model), so the
+    # autofit grid memoizes them: the IB fit for a given model_ib is identical
+    # across the 4 model_cell values (and vice versa), cutting 32 fits to 8. The
+    # memo is populated up front by _build_precomputed_hints and only READ here, so
+    # parallel grid workers never mutate shared state. A missing key (a candidate
+    # that raised during pre-population) is just refit locally without storing.
     single_candidates: List[_SingleFitCandidate] = []
     for component in ("ib", "cell"):
+        model_type = model_ib if component == "ib" else model_cell
+        key: Tuple[str, ModelType] = (component, model_type)
+        cached: Optional[_SingleFitCandidate] = None
+        if precomputed is not None and use_precomputed:
+            cached = precomputed.single_candidates.get(key)
+        if cached is not None:
+            single_candidates.append(cached)
+            continue
         try:
-            single_candidates.append(
-                _fit_single_peak_candidate(
-                    x,
-                    y,
-                    opts,
-                    hints,
-                    model_ib if component == "ib" else model_cell,
-                    component,
-                )
+            candidate = _fit_single_peak_candidate(
+                x, y, opts, hints, model_type, component
             )
         except (RuntimeError, ValueError):
             continue
+        single_candidates.append(candidate)
 
     if not single_candidates:
         raise ValueError("Failed to fit even a single-peak model")
@@ -1213,7 +1480,7 @@ def _fit_curve_once(
         # Fall back to original behavior
         return _fit_two_peak_legacy(x, y, opts, hints, model_ib, model_cell,
                                      p1, popt_1peak, pcov_1peak, bic_1peak,
-                                     model_1peak, best_single.component)
+                                     model_1peak, best_single.component, base_p0)
 
     # --- Step 3: Pre-fit gate - check residual for second peak evidence ---
     residual_candidate = _find_residual_peak_candidate(x, residual, y, main_peak_mu, opts)
@@ -1372,9 +1639,11 @@ def _fit_two_peak_legacy(
     bic_1peak: float,
     model_1peak: ModelType,
     single_component: Literal["ib", "cell"],
+    base_p0: Optional[Tuple[float, ...]] = None,
 ) -> _FitResult:
     """Legacy 2-peak fitting logic (used when gated decision is disabled)."""
-    base_p0, _ = _initial_guesses(x, y, opts)
+    if base_p0 is None:
+        base_p0, _ = _initial_guesses(x, y, opts)
     A1, mu_ib_guess, A2, mu_cell_guess = base_p0
 
     p2 = _single_peak_initial_params(model_cell, A2, mu_cell_guess, hints.get("cell"), opts, is_ib=False)
