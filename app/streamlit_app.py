@@ -1115,7 +1115,13 @@ def _analyze_uploads(
     model_cell_val = st.session_state.get("model_cell")
     options_key = _analysis_options_cache_key(options)
 
-    for file in uploaded_files:
+    n_uploads = len(uploaded_files)
+    progress = st.progress(0.0, text=f"Analyzing 0 of {n_uploads} files…")
+
+    for idx, file in enumerate(uploaded_files):
+        progress.progress(
+            idx / n_uploads, text=f"Fitting {file.name} ({idx + 1}/{n_uploads})…"
+        )
         try:
             analysis, warning = _analyze_one_upload_cached(
                 file.getvalue(),
@@ -1160,6 +1166,11 @@ def _analyze_uploads(
         if warning:
             st.warning(warning)
         results.append((file.name, analysis))
+        progress.progress(
+            (idx + 1) / n_uploads,
+            text=f"Analyzed {idx + 1} of {n_uploads} files",
+        )
+    progress.empty()
     return results
 
 
