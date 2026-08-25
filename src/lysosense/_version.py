@@ -11,10 +11,27 @@ to import ``datetime`` or touch the clock at import time.
 
 from __future__ import annotations
 
-__version__ = "1.4.0"
+__version__ = "1.4.2"
 
 # (version, date, [human-readable change bullets]) — newest release first.
 CHANGELOG: list[tuple[str, str, list[str]]] = [
+    (
+        "1.4.2",
+        "2026-08-25",
+        [
+            "New guide example G — 'The plateau: same lysis %, different sample' — a case inspired by a similar real homogenization campaign and adapted for the guide (both axes in normalized units): identical lysis efficiency across a further high-pressure homogenization cycle while the distribution visibly changed, illustrating the method's resolution limit and how to read results at the plateau.",
+            "Guide tip added: analyze a challenging sample on its own — sidebar settings apply to the whole upload, and the Analyzer page can be opened in multiple tabs/windows, each with independent settings.",
+        ],
+    ),
+    (
+        "1.4.1",
+        "2026-08-25",
+        [
+            "Diagnostics fix: the 'model' column now reports the peak model(s) actually fitted (e.g. 'lognormal + gaussian'; a single name = one-peak fit). Previously it always showed 'gaussian' under autofit, regardless of the winning combination.",
+            "The Diagnostics table now carries a built-in glossary explaining each column (model, shoulder verdict, shoulder excess-σ, area robustness) directly beneath the table.",
+            "XLSX experimental-data export: sample sheets whose names collide after Excel's 31-character limit are now de-duplicated instead of failing the download.",
+        ],
+    ),
     (
         "1.4.0",
         "2026-07-30",

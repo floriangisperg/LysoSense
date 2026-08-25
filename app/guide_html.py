@@ -181,6 +181,257 @@ def _fig_shoulder_hidden(rng: np.random.Generator) -> go.Figure:
     return _base_layout(fig, "H · No detectable shoulder (below the limit)")
 
 
+# Plateau-example traces for Example G (see GUIDE_BODY): inspired by a
+# similar real case and adapted for the guide. Both axes are normalized
+# — x in relative size units, y as a fraction of each trace's maximum —
+# and the fits (gaussian + gaussian, autofit) are stored as component
+# parameters (height at mode / mode / sigma). Reported metrics are
+# scale-invariant.
+_PLATEAU_TRACES = {
+    "cyc2": {
+        "x": [0.2107, 0.2116, 0.2125, 0.2134, 0.2144, 0.2153, 0.2161, 0.2170, 0.2179,
+        0.2188, 0.2197, 0.2207, 0.2216, 0.2226, 0.2235, 0.2245, 0.2255, 0.2265, 0.2275,
+        0.2284, 0.2294, 0.2303, 0.2312, 0.2322, 0.2332, 0.2342, 0.2352, 0.2362, 0.2372,
+        0.2382, 0.2393, 0.2404, 0.2414, 0.2425, 0.2436, 0.2446, 0.2456, 0.2466, 0.2476,
+        0.2486, 0.2497, 0.2507, 0.2518, 0.2529, 0.2540, 0.2551, 0.2562, 0.2574, 0.2585,
+        0.2597, 0.2609, 0.2621, 0.2633, 0.2643, 0.2654, 0.2665, 0.2676, 0.2687, 0.2699,
+        0.2710, 0.2722, 0.2734, 0.2745, 0.2758, 0.2770, 0.2782, 0.2795, 0.2807, 0.2820,
+        0.2833, 0.2847, 0.2860, 0.2874, 0.2886, 0.2898, 0.2910, 0.2922, 0.2934, 0.2946,
+        0.2959, 0.2971, 0.2984, 0.2997, 0.3010, 0.3023, 0.3037, 0.3050, 0.3064, 0.3078,
+        0.3092, 0.3107, 0.3121, 0.3136, 0.3151, 0.3166, 0.3182, 0.3197, 0.3213, 0.3227,
+        0.3240, 0.3254, 0.3267, 0.3281, 0.3294, 0.3308, 0.3322, 0.3336, 0.3351, 0.3366,
+        0.3380, 0.3395, 0.3411, 0.3426, 0.3442, 0.3458, 0.3474, 0.3490, 0.3507, 0.3523,
+        0.3540, 0.3558, 0.3575, 0.3593, 0.3611, 0.3629, 0.3648, 0.3667, 0.3686, 0.3705,
+        0.3723, 0.3738, 0.3754, 0.3769, 0.3785, 0.3801, 0.3817, 0.3833, 0.3849, 0.3866,
+        0.3883, 0.3900, 0.3917, 0.3935, 0.3952, 0.3970, 0.3989, 0.4007, 0.4026, 0.4045,
+        0.4064, 0.4084, 0.4104, 0.4124, 0.4144, 0.4165, 0.4186, 0.4208, 0.4229, 0.4252,
+        0.4274, 0.4297, 0.4320, 0.4344, 0.4367, 0.4392, 0.4417, 0.4442, 0.4467, 0.4493,
+        0.4520, 0.4547, 0.4566, 0.4585, 0.4604, 0.4623, 0.4642, 0.4661, 0.4681, 0.4701,
+        0.4721, 0.4741, 0.4762, 0.4783, 0.4805, 0.4826, 0.4848, 0.4870, 0.4893, 0.4915,
+        0.4938, 0.4962, 0.4986, 0.5010, 0.5034, 0.5059, 0.5084, 0.5110, 0.5136, 0.5162,
+        0.5189, 0.5216, 0.5244, 0.5272, 0.5300, 0.5329, 0.5359, 0.5389, 0.5419, 0.5450,
+        0.5482, 0.5514, 0.5547, 0.5580, 0.5614, 0.5648, 0.5684, 0.5719, 0.5756, 0.5793,
+        0.5831, 0.5870, 0.5909, 0.5949, 0.5990, 0.6032, 0.6075, 0.6119, 0.6164, 0.6210,
+        0.6256, 0.6304, 0.6353, 0.6403, 0.6445, 0.6471, 0.6497, 0.6524, 0.6551, 0.6578,
+        0.6606, 0.6634, 0.6662, 0.6691, 0.6720, 0.6750, 0.6779, 0.6810, 0.6841, 0.6872,
+        0.6903, 0.6935, 0.6968, 0.7001, 0.7034, 0.7068, 0.7102, 0.7137, 0.7172, 0.7208,
+        0.7245, 0.7282, 0.7319, 0.7357, 0.7396, 0.7436, 0.7476, 0.7516, 0.7558, 0.7600,
+        0.7643, 0.7686, 0.7730, 0.7775, 0.7821, 0.7868, 0.7915, 0.7963, 0.8013, 0.8063,
+        0.8114, 0.8166, 0.8219, 0.8273, 0.8329, 0.8385, 0.8443, 0.8501, 0.8561, 0.8622,
+        0.8685, 0.8749, 0.8814, 0.8881, 0.8950, 0.9020, 0.9092, 0.9165, 0.9240, 0.9318,
+        0.9397, 0.9478, 0.9561, 0.9647, 0.9735, 0.9825, 0.9918, 1.0013, 1.0112, 1.0213,
+        1.0318, 1.0426, 1.0537, 1.0652, 1.0770, 1.0893, 1.1020, 1.1152, 1.1288, 1.1430,
+        1.1577, 1.1729, 1.1889, 1.2054, 1.2227, 1.2408, 1.2596],
+        "y": [-0.0000, -0.0013, -0.0008, 0.0024, 0.0008, 0.0053, 0.0050, 0.0085, 0.0101,
+        0.0098, 0.0127, 0.0135, 0.0141, 0.0176, 0.0178, 0.0196, 0.0240, 0.0228, 0.0259,
+        0.0268, 0.0297, 0.0295, 0.0290, 0.0301, 0.0332, 0.0329, 0.0339, 0.0343, 0.0341,
+        0.0351, 0.0370, 0.0387, 0.0406, 0.0437, 0.0442, 0.0439, 0.0448, 0.0430, 0.0426,
+        0.0421, 0.0449, 0.0457, 0.0465, 0.0486, 0.0482, 0.0472, 0.0483, 0.0487, 0.0490,
+        0.0509, 0.0511, 0.0498, 0.0506, 0.0504, 0.0498, 0.0493, 0.0496, 0.0489, 0.0476,
+        0.0478, 0.0483, 0.0485, 0.0495, 0.0493, 0.0504, 0.0480, 0.0468, 0.0472, 0.0453,
+        0.0446, 0.0451, 0.0441, 0.0445, 0.0455, 0.0436, 0.0434, 0.0438, 0.0428, 0.0433,
+        0.0434, 0.0440, 0.0436, 0.0409, 0.0401, 0.0409, 0.0415, 0.0402, 0.0399, 0.0389,
+        0.0381, 0.0369, 0.0367, 0.0350, 0.0345, 0.0344, 0.0344, 0.0346, 0.0344, 0.0340,
+        0.0317, 0.0313, 0.0306, 0.0309, 0.0301, 0.0294, 0.0291, 0.0284, 0.0275, 0.0272,
+        0.0266, 0.0270, 0.0266, 0.0262, 0.0252, 0.0236, 0.0224, 0.0231, 0.0235, 0.0235,
+        0.0231, 0.0238, 0.0240, 0.0244, 0.0231, 0.0215, 0.0216, 0.0216, 0.0225, 0.0232,
+        0.0228, 0.0228, 0.0220, 0.0211, 0.0218, 0.0223, 0.0227, 0.0237, 0.0243, 0.0246,
+        0.0257, 0.0265, 0.0264, 0.0264, 0.0274, 0.0298, 0.0301, 0.0306, 0.0320, 0.0324,
+        0.0333, 0.0347, 0.0369, 0.0381, 0.0392, 0.0419, 0.0439, 0.0459, 0.0478, 0.0494,
+        0.0517, 0.0547, 0.0578, 0.0604, 0.0626, 0.0652, 0.0685, 0.0714, 0.0745, 0.0775,
+        0.0812, 0.0838, 0.0859, 0.0893, 0.0932, 0.0963, 0.0998, 0.1037, 0.1071, 0.1106,
+        0.1138, 0.1175, 0.1213, 0.1258, 0.1303, 0.1345, 0.1390, 0.1436, 0.1482, 0.1534,
+        0.1579, 0.1634, 0.1694, 0.1752, 0.1807, 0.1877, 0.1945, 0.2014, 0.2082, 0.2163,
+        0.2237, 0.2320, 0.2405, 0.2492, 0.2586, 0.2674, 0.2773, 0.2884, 0.2995, 0.3108,
+        0.3227, 0.3348, 0.3474, 0.3606, 0.3738, 0.3881, 0.4028, 0.4177, 0.4345, 0.4515,
+        0.4687, 0.4865, 0.5047, 0.5243, 0.5444, 0.5645, 0.5857, 0.6072, 0.6297, 0.6525,
+        0.6760, 0.6994, 0.7230, 0.7472, 0.7671, 0.7795, 0.7918, 0.8037, 0.8155, 0.8275,
+        0.8398, 0.8520, 0.8634, 0.8747, 0.8866, 0.8983, 0.9097, 0.9202, 0.9305, 0.9400,
+        0.9488, 0.9574, 0.9653, 0.9728, 0.9792, 0.9851, 0.9902, 0.9945, 0.9977, 0.9995,
+        1.0000, 0.9990, 0.9965, 0.9925, 0.9876, 0.9816, 0.9740, 0.9649, 0.9544, 0.9423,
+        0.9287, 0.9142, 0.8991, 0.8832, 0.8667, 0.8493, 0.8307, 0.8119, 0.7927, 0.7740,
+        0.7549, 0.7354, 0.7158, 0.6960, 0.6764, 0.6563, 0.6360, 0.6156, 0.5955, 0.5753,
+        0.5549, 0.5348, 0.5149, 0.4954, 0.4766, 0.4587, 0.4419, 0.4259, 0.4111, 0.3972,
+        0.3843, 0.3714, 0.3587, 0.3455, 0.3309, 0.3152, 0.2980, 0.2791, 0.2579, 0.2350,
+        0.2117, 0.1874, 0.1635, 0.1409, 0.1196, 0.0996, 0.0816, 0.0659, 0.0522, 0.0407,
+        0.0314, 0.0236, 0.0172, 0.0126, 0.0089, 0.0062, 0.0040],
+        "ib": {"h": 0.98067, "mu": 0.7249, "s": 0.11856},
+        "cell": {"h": 0.22527, "mu": 0.9816, "s": 0.07682},
+        "metrics": {
+            "lysis": 0.8705,
+            "intact": 0.1295,
+            "r2": 0.9947,
+            "excess_sigma": 3.65,
+            "verdict": "shoulder",
+            "robustness": "stable",
+        },
+    },
+    "cyc3": {
+        "x": [0.2106, 0.2115, 0.2124, 0.2133, 0.2143, 0.2152, 0.2162, 0.2170, 0.2179,
+        0.2188, 0.2197, 0.2206, 0.2215, 0.2225, 0.2234, 0.2244, 0.2254, 0.2264, 0.2274,
+        0.2284, 0.2294, 0.2303, 0.2312, 0.2322, 0.2332, 0.2341, 0.2351, 0.2361, 0.2371,
+        0.2381, 0.2392, 0.2402, 0.2413, 0.2424, 0.2435, 0.2446, 0.2456, 0.2466, 0.2476,
+        0.2486, 0.2496, 0.2507, 0.2517, 0.2528, 0.2539, 0.2550, 0.2561, 0.2572, 0.2584,
+        0.2595, 0.2607, 0.2619, 0.2631, 0.2643, 0.2655, 0.2665, 0.2676, 0.2687, 0.2698,
+        0.2710, 0.2721, 0.2733, 0.2744, 0.2756, 0.2768, 0.2780, 0.2793, 0.2805, 0.2818,
+        0.2831, 0.2844, 0.2857, 0.2871, 0.2884, 0.2898, 0.2910, 0.2922, 0.2934, 0.2946,
+        0.2958, 0.2971, 0.2983, 0.2996, 0.3009, 0.3022, 0.3035, 0.3048, 0.3062, 0.3076,
+        0.3090, 0.3104, 0.3118, 0.3133, 0.3147, 0.3162, 0.3177, 0.3193, 0.3208, 0.3224,
+        0.3240, 0.3254, 0.3267, 0.3280, 0.3294, 0.3308, 0.3321, 0.3336, 0.3350, 0.3364,
+        0.3379, 0.3394, 0.3409, 0.3424, 0.3439, 0.3455, 0.3470, 0.3487, 0.3503, 0.3519,
+        0.3536, 0.3553, 0.3570, 0.3588, 0.3605, 0.3623, 0.3642, 0.3660, 0.3679, 0.3698,
+        0.3717, 0.3737, 0.3754, 0.3769, 0.3785, 0.3800, 0.3816, 0.3832, 0.3848, 0.3865,
+        0.3881, 0.3898, 0.3915, 0.3932, 0.3950, 0.3967, 0.3985, 0.4004, 0.4022, 0.4041,
+        0.4060, 0.4079, 0.4098, 0.4118, 0.4138, 0.4159, 0.4179, 0.4200, 0.4222, 0.4243,
+        0.4265, 0.4288, 0.4311, 0.4334, 0.4357, 0.4381, 0.4405, 0.4430, 0.4455, 0.4480,
+        0.4506, 0.4532, 0.4559, 0.4585, 0.4604, 0.4623, 0.4642, 0.4661, 0.4680, 0.4700,
+        0.4720, 0.4740, 0.4760, 0.4781, 0.4802, 0.4823, 0.4845, 0.4866, 0.4888, 0.4911,
+        0.4934, 0.4957, 0.4980, 0.5004, 0.5028, 0.5052, 0.5077, 0.5102, 0.5127, 0.5153,
+        0.5179, 0.5206, 0.5233, 0.5261, 0.5289, 0.5317, 0.5346, 0.5375, 0.5405, 0.5435,
+        0.5466, 0.5498, 0.5530, 0.5562, 0.5595, 0.5629, 0.5663, 0.5698, 0.5733, 0.5770,
+        0.5807, 0.5844, 0.5883, 0.5922, 0.5962, 0.6002, 0.6044, 0.6087, 0.6130, 0.6174,
+        0.6220, 0.6266, 0.6313, 0.6362, 0.6411, 0.6462, 0.6498, 0.6524, 0.6551, 0.6578,
+        0.6605, 0.6633, 0.6660, 0.6689, 0.6717, 0.6746, 0.6776, 0.6806, 0.6836, 0.6867,
+        0.6898, 0.6929, 0.6961, 0.6993, 0.7026, 0.7059, 0.7093, 0.7127, 0.7162, 0.7197,
+        0.7233, 0.7269, 0.7306, 0.7344, 0.7382, 0.7420, 0.7459, 0.7499, 0.7540, 0.7581,
+        0.7623, 0.7665, 0.7708, 0.7752, 0.7797, 0.7843, 0.7889, 0.7936, 0.7984, 0.8033,
+        0.8083, 0.8134, 0.8186, 0.8238, 0.8292, 0.8347, 0.8403, 0.8460, 0.8518, 0.8578,
+        0.8638, 0.8700, 0.8764, 0.8828, 0.8895, 0.8962, 0.9032, 0.9103, 0.9175, 0.9250,
+        0.9326, 0.9404, 0.9485, 0.9567, 0.9651, 0.9738, 0.9827, 0.9919, 1.0013, 1.0110,
+        1.0210, 1.0313, 1.0419, 1.0528, 1.0641, 1.0758, 1.0878, 1.1003, 1.1132, 1.1266,
+        1.1405, 1.1548, 1.1698, 1.1853, 1.2015, 1.2184, 1.2360, 1.2544],
+        "y": [0.0000, 0.0003, 0.0028, 0.0009, 0.0021, 0.0035, 0.0068, 0.0070, 0.0067,
+        0.0086, 0.0095, 0.0091, 0.0082, 0.0131, 0.0168, 0.0174, 0.0170, 0.0190, 0.0208,
+        0.0218, 0.0221, 0.0208, 0.0234, 0.0271, 0.0262, 0.0270, 0.0290, 0.0305, 0.0310,
+        0.0330, 0.0327, 0.0320, 0.0314, 0.0336, 0.0370, 0.0369, 0.0371, 0.0379, 0.0381,
+        0.0383, 0.0390, 0.0402, 0.0374, 0.0378, 0.0404, 0.0403, 0.0411, 0.0404, 0.0387,
+        0.0397, 0.0400, 0.0384, 0.0405, 0.0408, 0.0378, 0.0394, 0.0389, 0.0377, 0.0377,
+        0.0376, 0.0373, 0.0377, 0.0373, 0.0377, 0.0369, 0.0351, 0.0341, 0.0346, 0.0339,
+        0.0331, 0.0330, 0.0326, 0.0329, 0.0305, 0.0293, 0.0295, 0.0314, 0.0328, 0.0323,
+        0.0328, 0.0308, 0.0299, 0.0319, 0.0319, 0.0304, 0.0305, 0.0289, 0.0279, 0.0275,
+        0.0268, 0.0269, 0.0262, 0.0247, 0.0237, 0.0206, 0.0214, 0.0227, 0.0221, 0.0211,
+        0.0206, 0.0209, 0.0201, 0.0197, 0.0205, 0.0203, 0.0200, 0.0191, 0.0183, 0.0191,
+        0.0202, 0.0191, 0.0185, 0.0194, 0.0175, 0.0168, 0.0168, 0.0168, 0.0169, 0.0178,
+        0.0166, 0.0161, 0.0172, 0.0172, 0.0178, 0.0184, 0.0178, 0.0167, 0.0165, 0.0169,
+        0.0184, 0.0182, 0.0172, 0.0167, 0.0182, 0.0191, 0.0189, 0.0190, 0.0196, 0.0207,
+        0.0210, 0.0216, 0.0217, 0.0219, 0.0237, 0.0257, 0.0259, 0.0268, 0.0279, 0.0283,
+        0.0296, 0.0307, 0.0320, 0.0346, 0.0362, 0.0363, 0.0375, 0.0402, 0.0426, 0.0440,
+        0.0466, 0.0486, 0.0520, 0.0548, 0.0561, 0.0580, 0.0607, 0.0634, 0.0671, 0.0702,
+        0.0733, 0.0764, 0.0794, 0.0828, 0.0860, 0.0890, 0.0919, 0.0943, 0.0964, 0.0993,
+        0.1027, 0.1064, 0.1099, 0.1142, 0.1183, 0.1224, 0.1262, 0.1303, 0.1344, 0.1396,
+        0.1444, 0.1494, 0.1551, 0.1602, 0.1654, 0.1706, 0.1763, 0.1829, 0.1889, 0.1946,
+        0.2017, 0.2090, 0.2164, 0.2246, 0.2326, 0.2406, 0.2494, 0.2583, 0.2682, 0.2782,
+        0.2883, 0.2986, 0.3096, 0.3210, 0.3333, 0.3465, 0.3594, 0.3729, 0.3873, 0.4020,
+        0.4176, 0.4332, 0.4495, 0.4667, 0.4845, 0.5028, 0.5226, 0.5418, 0.5610, 0.5819,
+        0.6034, 0.6255, 0.6480, 0.6710, 0.6946, 0.7189, 0.7358, 0.7486, 0.7610, 0.7731,
+        0.7858, 0.7982, 0.8110, 0.8236, 0.8356, 0.8480, 0.8605, 0.8724, 0.8838, 0.8952,
+        0.9064, 0.9181, 0.9294, 0.9394, 0.9488, 0.9574, 0.9652, 0.9726, 0.9793, 0.9849,
+        0.9899, 0.9942, 0.9970, 0.9989, 0.9999, 0.9997, 0.9981, 0.9951, 0.9911, 0.9854,
+        0.9785, 0.9713, 0.9631, 0.9540, 0.9437, 0.9327, 0.9218, 0.9101, 0.8979, 0.8857,
+        0.8736, 0.8611, 0.8478, 0.8339, 0.8200, 0.8056, 0.7905, 0.7749, 0.7587, 0.7416,
+        0.7232, 0.7040, 0.6842, 0.6635, 0.6416, 0.6195, 0.5966, 0.5725, 0.5474, 0.5226,
+        0.4982, 0.4733, 0.4479, 0.4221, 0.3965, 0.3707, 0.3448, 0.3190, 0.2928, 0.2665,
+        0.2401, 0.2145, 0.1893, 0.1654, 0.1434, 0.1231, 0.1047, 0.0879, 0.0729, 0.0600,
+        0.0488, 0.0389, 0.0308, 0.0239, 0.0183, 0.0135, 0.0100, 0.0072],
+        "ib": {"h": 0.98024, "mu": 0.742, "s": 0.12484},
+        "cell": {"h": 0.20572, "mu": 0.9639, "s": 0.08606},
+        "metrics": {
+            "lysis": 0.8736,
+            "intact": 0.1264,
+            "r2": 0.997,
+            "excess_sigma": 3.24,
+            "verdict": "shoulder",
+            "robustness": "stable",
+        },
+    },
+}
+
+
+def _plateau_gauss(x: np.ndarray, p: dict[str, float]) -> np.ndarray:
+    """Normalized gaussian component from (height at mode, mode, sigma)."""
+    return p["h"] * np.exp(-0.5 * ((x - p["mu"]) / p["s"]) ** 2)
+
+
+def _fig_plateau_fits() -> go.Figure:
+    """Plateau example, cycle 2 vs cycle 3: same lysis %, visibly different form.
+
+    Axes are normalized (x in relative size units, y as fraction of the trace
+    maximum) — see the data-block comment above and Example G in GUIDE_BODY.
+    """
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=1,
+        cols=2,
+        shared_yaxes=True,
+        horizontal_spacing=0.06,
+        subplot_titles=(
+            "Cycle 2 — lysis 87.1%",
+            "Cycle 3 — lysis 87.4%",
+        ),
+    )
+    for col, cyc in enumerate(("cyc2", "cyc3"), start=1):
+        d = _PLATEAU_TRACES[cyc]
+        x = np.asarray(d["x"], dtype=float)
+        ib = _plateau_gauss(x, d["ib"])
+        cell = _plateau_gauss(x, d["cell"])
+        show = col == 1
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=np.asarray(d["y"], dtype=float), name="Raw (normalized)",
+                line=dict(color=_RAW_COLOR, width=2), showlegend=show,
+            ), row=1, col=col,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=ib + cell, name="Fit", line=dict(color=_FIT_COLOR, width=2.5, dash="dash"),
+                showlegend=show,
+            ), row=1, col=col,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=cell, name="Cells (shoulder)", line=dict(color=_CELL_COLOR, width=2),
+                showlegend=show,
+            ), row=1, col=col,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x, y=ib, name="IBs", line=dict(color=_IB_COLOR, width=2, dash="dot"),
+                showlegend=show,
+            ), row=1, col=col,
+        )
+    fig.update_layout(
+        title=dict(text="I · Plateau: identical lysis %, different distribution", font=dict(size=14)),
+        xaxis_title="Relative particle size",
+        yaxis_title="Signal (normalized)",
+        template="plotly_white",
+        height=340,
+        margin=dict(l=45, r=20, t=60, b=45),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.32, x=0),
+    )
+    fig.update_xaxes(range=[0.2, 1.3])
+    return fig
+
+
+def _fig_plateau_overlay() -> go.Figure:
+    """The two normalized raw traces superimposed: the sample kept changing."""
+    fig = go.Figure()
+    for cyc, color, name in (
+        ("cyc2", "#1f77b4", "Cycle 2"),
+        ("cyc3", "#d62728", "Cycle 3 (one further pass)"),
+    ):
+        d = _PLATEAU_TRACES[cyc]
+        fig.add_trace(
+            go.Scatter(
+                x=np.asarray(d["x"], dtype=float), y=np.asarray(d["y"], dtype=float),
+                name=name, line=dict(color=color, width=2),
+            )
+        )
+    fig = _base_layout(fig, "J · The distributions are not identical — but lysis % is")
+    fig.update_xaxes(title="Relative particle size", range=[0.2, 1.3])
+    return fig
+
+
 def _build_figures() -> Dict[str, str]:
     """Return ``{figure_id: plotly div+script snippet}`` for the guide."""
     rng = np.random.default_rng(20260729)
@@ -193,6 +444,8 @@ def _build_figures() -> Dict[str, str]:
         "bad": _fig_not_evaluable(rng),
         "shoulder_clear": _fig_shoulder_clear(rng),
         "shoulder_hidden": _fig_shoulder_hidden(rng),
+        "plateau_fits": _fig_plateau_fits(),
+        "plateau_overlay": _fig_plateau_overlay(),
     }
     snippets: Dict[str, str] = {}
     for fid, fig in figures.items():
@@ -487,6 +740,7 @@ Results table.</p>
   <tr><td><code>mean_cell_µm</code> / <code>mean_ib_µm</code></td><td>Mean particle size of each component.</td></tr>
   <tr><td><code>fwhm_cell_µm</code> / <code>fwhm_ib_µm</code></td><td>Full-width-at-half-maximum (peak width) of each component. A surprisingly narrow width can flag an over-tight fit — try <em>Relax peak-width constraints</em>.</td></tr>
   <tr><td><code>r_squared</code></td><td>Goodness of fit. 🟢 ≥0.95 · 🟡 ≥0.90 · 🟠 ≥0.80 · 🔴 &lt;0.80.</td></tr>
+  <tr><td><code>model</code></td><td>The peak model(s) actually fitted: <code>A + B</code> means model A for the IB peak and model B for the cell peak; a single name means a one-peak fit of that model.</td></tr>
   <tr><td><code>area_robustness</code></td><td>Overlap fits only: <em>stable / moderate / uncertain</em> — how much the cell-area estimate moves when overlap settings vary.</td></tr>
   <tr><td><code>shoulder_verdict</code></td><td>Objective second-component check: <span class="tag">shoulder</span> (a second component is detected), <span class="tag">none</span> (clean single peak), <span class="tag">indeterminate</span> (near the detection limit), <span class="tag">n/a</span> (dominant peak at/after the cell target, or trace not evaluable).</td></tr>
   <tr><td><code>shoulder_excess_sigma</code></td><td>How <em>confidently</em> a shoulder is detected — the signal excess over a single-peak prediction, in noise σ. This is confidence, <strong>not</strong> shoulder size (see below).</td></tr>
@@ -498,6 +752,9 @@ cell population is <code>intact_fraction</code> (or <code>area_cells</code>) —
 can score a higher σ than a large but noisy one. So judge <em>presence</em> by the verdict/σ and
 <em>magnitude</em> by the area. And <code>shoulder_verdict = none</code> means <strong>below the detection
 limit</strong>, not zero intact cells — the true residual could be anything from 0 to a few %.
+A high σ with verdict <span class="tag">indeterminate</span> means the tail bulges but the shape test
+did not confirm it — that can also be a main peak whose shape is not lognormal, so do not call it a
+shoulder yet.
 </div>
 <p>The four tabs: <strong>Overview</strong> (all traces together),
 <strong>Individual Samples</strong> (one plot per sample),
@@ -544,10 +801,12 @@ the noise; we simply can't tell, so the verdict is <span class="tag">none</span>
 samples, not a precise residual from a single trace.</figcaption>
 
 <h2 id="examples">Worked examples</h2>
-<div class="note">The traces below are <strong>synthetic illustrations</strong>
+<div class="note">Examples A–F are <strong>synthetic illustrations</strong>
 (generated from simple peak functions), not real measurements — they are designed
 to show each situation clearly. The "not evaluable" one (F) is modelled on a real
-file that showed a strongly negative, drifting baseline.</div>
+file that showed a strongly negative, drifting baseline. Example G is
+<strong>inspired by a similar real case</strong> and adapted slightly for this
+guide (both axes in normalized units).</div>
 
 <h3>Example A — Clean two-peak fit (trust the numbers)</h3>
 <p>Two well-separated peaks. The gates accept the 2-peak model, R² is high and
@@ -602,6 +861,44 @@ the sample</strong> — do not report a lysis number from it.</div>
 <figcaption>Fig. F — signal strongly negative with only small positive
 excursions; the dotted line marks zero. Not evaluable.</figcaption>
 
+<h3>Example G — The plateau: same lysis %, different sample</h3>
+<p>This case is <strong>inspired by a similar one from a multi-pass
+homogenization campaign</strong> and was adapted slightly for this guide: cycle 2
+and cycle 3 of the same material, with <strong>one further homogenization cycle
+at significant pressure in between</strong>. Both axes are shown in normalized
+units — size relative to the cell peak, signal as a fraction of each trace's
+maximum — and the analysis follows the method publication (workflow and target
+settings as described there). Lysis %, R² and the shoulder excess-σ do not depend
+on the axis scaling.</p>
+{{FIGURE:plateau_fits}}
+<figcaption>Fig. I — <strong>Cycle 2 vs cycle 3.</strong> Both are overlap fits
+(gaussian + gaussian, R² 0.995 / 0.997, robustness <em>stable</em>). In cycle 2
+the shoulder is visually trustworthy: the cell component (green) forms a clear
+bulge on the IB tail, and the objective check agrees (verdict
+<span class="tag">shoulder</span>, excess 3.7σ). Cycle 3 still passes the check
+(3.2σ) and the fit still splits off ~12.6% cells — but by eye the second
+component is barely there. That is the <strong>resolution limit of the
+method</strong>: detected, yet close to what the fit cannot distinguish from one
+slightly asymmetric peak.</figcaption>
+<div class="warn"><strong>The punchline:</strong> lysis % is identical across the
+extra high-pressure cycle — <strong>87.1%</strong> (cycle 2) vs
+<strong>87.4%</strong> (cycle 3). The homogenizer did do something, and the
+distribution shows it: the main peak shifted up-size by ~2% and broadened by ~5%,
+and the shoulder became less distinct (excess 3.7σ → 3.2σ; the valley between the
+populations rose from ~33% to ~43% of the peak height). But the cell-area split —
+and with it lysis % — has <strong>saturated</strong>. Near the plateau, a constant
+lysis % does <em>not</em> mean "nothing changed".</div>
+{{FIGURE:plateau_overlay}}
+<figcaption>Fig. J — the same two traces as raw curves: clearly not identical
+distributions — cycle 3's main peak sits larger and further up-size — yet the
+two-component split assigns both the same lysis %.</figcaption>
+<p><strong>How to work at the plateau:</strong> report the <em>trend</em> across
+cycles and read the distribution's form — peak position and width, valley depth,
+shoulder excess-σ — instead of single point values of lysis %. When late cycles
+drop to <span class="tag">indeterminate</span> or <span class="tag">none</span>,
+lysis % sits at its floor (≈100%) and carries no further information; what still
+moves is the IB peak itself.</p>
+
 <h2 id="tips">Tips, gotchas &amp; FAQ</h2>
 <ul>
   <li><strong>Single peak is ambiguous.</strong> It is assigned by proximity to
@@ -623,6 +920,13 @@ excursions; the dotted line marks zero. Not evaluable.</figcaption>
   traces are on the same scale.</li>
   <li><strong>Separation samples?</strong> Rename the peaks (Peak labels) to what
   they actually are.</li>
+  <li><strong>One challenging sample in the batch?</strong> Analyze it on its own.
+  Sidebar settings apply to <em>all</em> uploaded traces at once, so an adjustment
+  that helps a difficult sample (different targets, sensitivity, or width
+  relaxation) would also change the fit of every other trace in the process. The
+  Analyzer page has its own URL — open it in several browser tabs or windows side
+  by side; each tab keeps its own independent uploads and settings. That also
+  makes it easy to compare two settings on the same trace live.</li>
   <li><strong>Non-physical / negative trace?</strong> Not evaluable — see
   Example F.</li>
 </ul>
@@ -636,6 +940,7 @@ excursions; the dotted line marks zero. Not evaluable.</figcaption>
   <tr><td>Expected second peak is missed</td><td>Set <em>Sensitivity → High</em>, or <em>Allow overlapping peaks</em>.</td></tr>
   <tr><td>Spurious second peak appears</td><td>Set <em>Sensitivity → Low</em>, or tighten <em>Max peak width</em>.</td></tr>
   <tr><td>Shoulder verdict <em>none</em> but a second peak is expected</td><td>Near the detection limit — raise <em>Sensitivity</em> or <em>Allow overlapping peaks</em>; treat the number as approximate (see <em>Why shoulder results are uncertain</em>).</td></tr>
+  <tr><td>Lysis % stops moving across passes while the peak still changes</td><td>Plateau at the resolution limit — read the trend and the peak form (position, width, valley), not the point lysis % (see Example G).</td></tr>
   <tr><td>Trace is negative or drifting</td><td>Not evaluable — try baseline subtraction, else exclude the sample.</td></tr>
 </table>
 

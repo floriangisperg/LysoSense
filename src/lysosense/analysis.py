@@ -830,7 +830,12 @@ def _derive_metrics(
 
     model_ib = fitres.get("model_ib", opts.get_model_ib())
     model_cell = fitres.get("model_cell", opts.get_model_cell())
+    # Report the models actually fitted, not ``opts.model``: the autofit grid
+    # keeps ``opts.model`` at its "gaussian" placeholder and varies
+    # ``model_ib``/``model_cell`` per combo, so ``opts.model`` would always read
+    # "gaussian" regardless of which combination won.
     if fitres["kind"] in ("two", "overlap"):
+        model_label = f"{model_ib} + {model_cell}"
         n1 = _params_per_peak(model_ib)
         params1 = fitres["popt"][:n1]
         params2 = fitres["popt"][n1:]
@@ -851,6 +856,7 @@ def _derive_metrics(
         fwhm_ib = float(fwhm2 if cell_first else fwhm1)
     else:
         single_component = fitres.get("single_component") or "ib"
+        model_label = model_cell if single_component == "cell" else model_ib
         if single_component == "cell":
             m_cell = float(_mean_from_params(model_cell, fitres["popt"]))
             fwhm_cell = float(_calculate_fwhm_from_params(model_cell, fitres["popt"]))
@@ -866,7 +872,7 @@ def _derive_metrics(
     lysis_eff = float(1.0 - intact_fraction)
 
     metrics: Dict[str, float | str | None] = {
-        "model": opts.model,
+        "model": model_label,
         "fit_kind": fitres["kind"],
         "area_cells": area_cells,
         "area_inclusion_bodies": area_ibs,

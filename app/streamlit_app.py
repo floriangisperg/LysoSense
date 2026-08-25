@@ -1856,7 +1856,24 @@ def _render_metrics(
     st.subheader("Diagnostics")
     st.caption(
         "Fit quality and reliability indicators. Use these to judge how much to "
-        "trust the results above before interpreting lysis efficiency."
+        "trust the results above before interpreting lysis efficiency.\n\n"
+        f"**model** — peak model(s) actually fitted: 'A + B' means model A for the "
+        f"{peak_name_ib.lower()} peak and model B for the {peak_name_cell.lower()} "
+        "peak; a single name = one-peak fit of that model.\n"
+        "**shoulder_verdict** — objective second-component check, independent of "
+        "the fit: *shoulder* = detected, *none* = below the detection limit (not "
+        "zero cells), *indeterminate* = near the limit, *n/a* = dominant peak at/"
+        "after the cell target.\n"
+        "**shoulder_excess_sigma** — how strongly the right tail rises above the "
+        "best single-peak prediction, in units of the measurement noise (σ). "
+        "Bigger = more confident a second component is present. It measures "
+        "confidence, not size — the amount of "
+        f"{peak_name_cell.lower()} is the area / intact fraction. A high σ with "
+        "verdict *indeterminate* means the tail bulges but the shape test did not "
+        "confirm it, so do not call it a shoulder yet.\n"
+        "**area_robustness** — overlap fits only: how much the cell-area split "
+        "moves when the overlap assumptions vary (*stable* / *moderate* / "
+        "*uncertain*)."
     )
     diag_numeric = diagnostics_df.select_dtypes(include="number").columns
     diag_formatters: Dict[str, str] = {
@@ -1923,11 +1940,21 @@ def _render_experimental_data_download(
         return
 
     buffer = io.BytesIO()
+    used_sheet_names: set = set()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for label, analysis in results:
             # Create sheet name from filename (remove .dat extension)
-            # Excel sheet names are limited to 31 characters
-            sheet_name = label.replace(".dat", "")[:31]
+            # Excel sheet names are limited to 31 characters. Long filenames that
+            # share a 31-char prefix (e.g. ..._pass_1 / ..._pass_10) would collide;
+            # openpyxl rejects duplicates, so de-duplicate with a numeric suffix.
+            base_name = label.replace(".dat", "")[:31]
+            sheet_name = base_name
+            suffix = 2
+            while sheet_name in used_sheet_names:
+                tail = f"~{suffix}"
+                sheet_name = base_name[: 31 - len(tail)] + tail
+                suffix += 1
+            used_sheet_names.add(sheet_name)
 
             # Use observed DataFrame which contains original data and fitted values.
             # Surface the user-supplied peak names in the exported column headers;

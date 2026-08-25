@@ -195,8 +195,10 @@ reliable each fit is). Lysis efficiency leads the Results table.
 | Column | Meaning |
 | --- | --- |
 | `r_squared` | Goodness of fit. 🟢 ≥0.95 · 🟡 ≥0.90 · 🟠 ≥0.80 · 🔴 <0.80. |
+| `fit_quality` | Verbal label for the R² bands (Excellent / Good / Fair / Poor). |
+| `model` | Peak model(s) actually fitted: `A + B` = model A for the IB peak and model B for the cell peak; a single name = one-peak fit of that model. |
 | `shoulder_verdict` | *shoulder / none / indeterminate / n/a* — an objective check for a second component, independent of the fit. |
-| `shoulder_excess_sigma` | How strongly the right tail exceeds a single-peak prediction (higher = more shoulder). |
+| `shoulder_excess_sigma` | How strongly the right tail rises above the best single-peak prediction, in units of the measurement noise (σ). Bigger = more confident a second component is present. This is confidence, **not** shoulder size — the amount of cells is the area / intact fraction. A high σ with verdict *indeterminate* means the tail bulges but the shape test did not confirm it. |
 | `area_robustness` | Overlap fits only: *stable / moderate / uncertain* — how much the cell-area estimate moves when overlap settings vary. |
 
 The four tabs: **Overview** (all traces together), **Individual Samples** (one
@@ -229,6 +231,19 @@ The in-app guide shows these as **live, interactive plots**. The situations:
   reference subtraction went wrong; any IB/cell fit on top of that is
   meaningless. Try baseline subtraction, check sample prep/dilution, and if it
   stays like this, exclude the sample.
+- **G — The plateau: same lysis %, different sample.** Inspired by a similar
+  case from a multi-pass homogenization campaign and adapted slightly for this
+  guide: two cycles of the same material with one further homogenization cycle
+  at significant pressure in between (axes in normalized units; workflow and
+  target settings as in the method publication). Cycle 2 shows a visually
+  trustworthy shoulder (verdict *shoulder*, 3.7σ); cycle 3 still passes the
+  check (3.2σ) but the second component is barely visible — the method's
+  resolution limit. The model reports the same lysis (87.1% vs 87.4%) even
+  though the distribution clearly changed (main peak ~2% up-size and ~5%
+  broader, shoulder excess 3.7σ → 3.2σ). Near the plateau a constant lysis %
+  does **not** mean "nothing changed" — report the trend across cycles and the
+  peak form (position, width, valley depth), not point values. The in-app guide
+  shows the plots of this pair.
 
 ## Tips, gotchas & FAQ
 
@@ -245,6 +260,13 @@ The in-app guide shows these as **live, interactive plots**. The situations:
   scale.
 - **Separation samples?** Rename the peaks (Peak labels) to what they actually
   are.
+- **One challenging sample in the batch?** Analyze it on its own. Sidebar
+  settings apply to *all* uploaded traces at once, so an adjustment that helps a
+  difficult sample (different targets, sensitivity, or width relaxation) would
+  also change the fit of every other trace in the process. The Analyzer page has
+  its own URL — open it in several browser tabs or windows side by side; each
+  tab keeps its own independent uploads and settings. Also handy for comparing
+  two settings on the same trace live.
 - **Non-physical / negative trace?** Not evaluable — see Example F.
 
 ## Troubleshooting
@@ -256,4 +278,5 @@ The in-app guide shows these as **live, interactive plots**. The situations:
 | Fit is much narrower than the data, low R² | Enable *Relax peak-width constraints*. |
 | Expected second peak is missed | Set *Sensitivity → High*, or *Allow overlapping peaks*. |
 | Spurious second peak appears | Set *Sensitivity → Low*, or tighten *Max peak width*. |
+| Lysis % stops moving across passes while the peak still changes | Plateau at the resolution limit — read the trend and the peak form (position, width, valley), not the point lysis % (see Example G). |
 | Trace is negative or drifting | Not evaluable — try baseline subtraction, else exclude the sample. |
