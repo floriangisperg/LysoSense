@@ -11,10 +11,19 @@ to import ``datetime`` or touch the clock at import time.
 
 from __future__ import annotations
 
-__version__ = "1.4.2"
+__version__ = "1.4.3"
 
 # (version, date, [human-readable change bullets]) — newest release first.
 CHANGELOG: list[tuple[str, str, list[str]]] = [
+    (
+        "1.4.3",
+        "2026-08-26",
+        [
+            "Guide: all example plots now use relative axes like the plateau example — particle size relative to the cell target size (the cell peak sits near 1) and signal as a fraction of each trace's maximum. Curve shapes and all reported metrics are unchanged; the app's own plots still show absolute µm.",
+            "Guide: new 'Interactive plots & appearance' section — every chart (in the guide and in the app) is an interactive Plotly figure: hover for values, legend show/hide and isolate, zoom/pan, and PNG download from each plot's toolbar; plus where to switch the light/dark theme.",
+            "Run summary simplified to four metrics: removed the 'Shoulders detected' tile — it counted the objective second-component check, which fires trivially on resolved two-peak fits and read as 'fitted as a shoulder'. The per-trace shoulder verdict and excess-σ stay in the Diagnostics table and XLSX exports, and the glossary now notes the trivial-fire behaviour.",
+        ],
+    ),
     (
         "1.4.2",
         "2026-08-25",

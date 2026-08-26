@@ -1398,11 +1398,7 @@ def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
     )
     low_quality_count = sum(1 for value in r_squared_values if value < 0.90)
 
-    shoulder_count = sum(
-        1 for _, analysis in entries if analysis.metrics.get("shoulder_verdict") == "shoulder"
-    )
-
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Selected traces", len(entries))
     with col2:
@@ -1417,17 +1413,6 @@ def _render_run_summary(entries: Sequence[Tuple[str, AnalysisResult]]) -> None:
     with col4:
         mean_r2 = sum(r_squared_values) / max(len(r_squared_values), 1)
         st.metric("Mean R²", f"{mean_r2:.4f}")
-    with col5:
-        st.metric(
-            "Shoulders detected",
-            f"{shoulder_count}/{len(entries)}",
-            help=(
-                "Objective shoulder check (right-tail curvature stable across smoothing "
-                "+ single-lognormal tail excess >= 1.5 sigma). 'shoulder' = a second "
-                "component is present; 'none' = clean single peak; 'indeterminate' = near "
-                "the detection limit; 'n/a' = dominant peak is at/after the cell target."
-            ),
-        )
 
     if low_quality_count:
         st.warning(
@@ -1863,7 +1848,9 @@ def _render_metrics(
         "**shoulder_verdict** — objective second-component check, independent of "
         "the fit: *shoulder* = detected, *none* = below the detection limit (not "
         "zero cells), *indeterminate* = near the limit, *n/a* = dominant peak at/"
-        "after the cell target.\n"
+        "after the cell target. On a resolved two-peak fit it fires trivially "
+        "(the second peak is plain to see) — it is informative on one-peak and "
+        "overlap fits.\n"
         "**shoulder_excess_sigma** — how strongly the right tail rises above the "
         "best single-peak prediction, in units of the measurement noise (σ). "
         "Bigger = more confident a second component is present. It measures "

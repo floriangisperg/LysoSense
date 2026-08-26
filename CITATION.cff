@@ -4,8 +4,8 @@ title: "LysoSense: DCS/CPS trace analyzer for quantifying cell lysis and inclusi
 type: software
 license: "Other"
 repository-code: "https://github.com/floriangisperg/LysoSense"
-version: "1.2.0"
-date-released: "2026-07-29"
+version: "1.4.3"
+date-released: "2026-08-26"
 keywords:
   - differential centrifugal sedimentation
   - inclusion bodies

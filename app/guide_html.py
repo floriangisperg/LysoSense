@@ -517,14 +517,14 @@ figcaption { text-align: center; color: #6b7280; font-size: 0.88rem; margin-top:
 
 GUIDE_BODY = """
 <h1>LysoSense — User Guide</h1>
-<p><em>Interactive guide with example plots. The plots are live — hover for
-values, <strong>click a trace name in the legend to isolate or hide it</strong>,
-and use the toolbar (top-right of each plot) to zoom and pan. The same controls
-work in the app.</em></p>
+<p><em>Interactive guide with example plots — every chart is live, here and in
+the app itself (see <a href="#interactive">Interactive plots &amp;
+appearance</a>).</em></p>
 
 <div class="toc">
   <strong>Contents</strong>
   <ul>
+    <li>Interactive plots &amp; appearance</li>
     <li>What LysoSense measures</li>
     <li>About the DCS measurement itself</li>
     <li>Set the IB &amp; cell sizes (important)</li>
@@ -538,6 +538,22 @@ work in the app.</em></p>
     <li>Troubleshooting</li>
   </ul>
 </div>
+
+<h2 id="interactive">Interactive plots &amp; appearance</h2>
+<p>Every chart in this guide — and every chart in the app itself — is an
+interactive <strong>Plotly</strong> figure, not a static image:</p>
+<ul>
+  <li><strong>Hover</strong> over any curve to read off exact values.</li>
+  <li><strong>Legend:</strong> click a trace name to show or hide it;
+  <strong>double-click</strong> a name to isolate that trace (double-click it
+  again to bring the rest back).</li>
+  <li><strong>Toolbar</strong> (top-right of each plot): drag on the plot or use
+  the zoom / pan buttons, reset the axes — and the <strong>camera icon
+  downloads the current view as a PNG</strong>.</li>
+</ul>
+<p><strong>Light / dark theme:</strong> switch in the app via the menu
+(<span class="kbd">☰</span>, top-right) → <em>Settings</em> → <em>Theme</em>
+(light, dark, or follow system).</p>
 
 <h2 id="what">What LysoSense measures</h2>
 <p>LysoSense analyses <strong>differential centrifugal sedimentation (DCS/CPS)</strong>
@@ -728,8 +744,8 @@ these settings vary.</p>
 <p><strong>View mode:</strong> Combined (raw + fit + components), Fit Overview
 (components only), or Raw Data Only. Toggle the fit envelope, components, and a
 logarithmic size axis (display only — the fit always runs in linear µm).</p>
-<p><strong>Light / dark theme:</strong> switch via the menu (<span class="kbd">☰</span>,
-top-right) → <em>Settings</em> → <em>Theme</em> (light, dark, or follow system).</p>
+<p><strong>Light / dark theme:</strong> see <a href="#interactive">Interactive
+plots &amp; appearance</a>.</p>
 
 <h2 id="results">Reading the results</h2>
 <p>The <strong>Results Table</strong> tab shows two tables: <strong>Results</strong>
@@ -748,7 +764,7 @@ Results table.</p>
   <tr><td><code>r_squared</code></td><td>Goodness of fit. 🟢 ≥0.95 · 🟡 ≥0.90 · 🟠 ≥0.80 · 🔴 &lt;0.80.</td></tr>
   <tr><td><code>model</code></td><td>The peak model(s) actually fitted: <code>A + B</code> means model A for the IB peak and model B for the cell peak; a single name means a one-peak fit of that model.</td></tr>
   <tr><td><code>area_robustness</code></td><td>Overlap fits only: <em>stable / moderate / uncertain</em> — how much the cell-area estimate moves when overlap settings vary.</td></tr>
-  <tr><td><code>shoulder_verdict</code></td><td>Objective second-component check: <span class="tag">shoulder</span> (a second component is detected), <span class="tag">none</span> (clean single peak), <span class="tag">indeterminate</span> (near the detection limit), <span class="tag">n/a</span> (dominant peak at/after the cell target, or trace not evaluable).</td></tr>
+  <tr><td><code>shoulder_verdict</code></td><td>Objective second-component check: <span class="tag">shoulder</span> (a second component is detected), <span class="tag">none</span> (clean single peak), <span class="tag">indeterminate</span> (near the detection limit), <span class="tag">n/a</span> (dominant peak at/after the cell target, or trace not evaluable). On a <em>resolved</em> two-peak fit it fires trivially — read it on one-peak and overlap fits.</td></tr>
   <tr><td><code>shoulder_excess_sigma</code></td><td>How <em>confidently</em> a shoulder is detected — the signal excess over a single-peak prediction, in noise σ. This is confidence, <strong>not</strong> shoulder size (see below).</td></tr>
 </table>
 <div class="note">
