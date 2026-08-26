@@ -7,9 +7,11 @@ sit beside the running app. It bundles:
 * interactive Plotly example figures (SYNTHETIC DCS traces) embedded inline.
 
 The example traces are generated from simple peak functions — they are
-illustrative, not real measurements. Plotly.js is inlined once via
-``plotly.offline.get_plotlyjs`` so the page works fully offline. No new runtime
-dependencies: only numpy and plotly (both already used by the app).
+illustrative, not real measurements. Every figure shares the same relative
+axes: particle size relative to the cell target size (the cell peak sits near
+1) and signal as a fraction of each trace's maximum. Plotly.js is inlined once
+via ``plotly.offline.get_plotlyjs`` so the page works fully offline. No new
+runtime dependencies: only numpy and plotly (both already used by the app).
 """
 
 from __future__ import annotations
@@ -27,10 +29,22 @@ _CELL_COLOR = "#2ca02c"
 _IB_COLOR = "#ff7f0e"
 _TIGHT_COLOR = "#d62728"
 
+# All example figures are plotted on relative axes (matching the plateau
+# example): x is particle size relative to the cell target size — the cell
+# peak sits near 1 — and y is each trace normalized to its own maximum. The
+# synthetic figures are designed at the app-default targets (IB 0.48 /
+# cell 0.85 µm) and converted with this constant.
+_CELL_TARGET_UM = 0.85
+
 
 def _peak(x: np.ndarray, height: float, mu: float, sigma: float) -> np.ndarray:
     """Symmetric peak of given ``height`` (max value) at ``mu`` with width ``sigma``."""
     return height * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+
+def _peak_um(x: np.ndarray, height: float, mu: float, sigma: float) -> np.ndarray:
+    """Peak designed at µm positions, drawn on the relative x-axis."""
+    return _peak(x, height, mu / _CELL_TARGET_UM, sigma / _CELL_TARGET_UM)
 
 
 def _r_squared(y: np.ndarray, yhat: np.ndarray) -> float:
@@ -42,14 +56,14 @@ def _r_squared(y: np.ndarray, yhat: np.ndarray) -> float:
 def _base_layout(fig: go.Figure, title: str) -> go.Figure:
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
-        xaxis_title="Particle size (µm)",
-        yaxis_title="Signal",
+        xaxis_title="Relative particle size",
+        yaxis_title="Signal (normalized)",
         template="plotly_white",
         height=330,
         margin=dict(l=45, r=20, t=45, b=45),
         legend=dict(orientation="h", yanchor="bottom", y=-0.32, x=0),
     )
-    fig.update_xaxes(range=[0.2, 1.2])
+    fig.update_xaxes(range=[0.2 / _CELL_TARGET_UM, 1.2 / _CELL_TARGET_UM])
     return fig
 
 
@@ -58,12 +72,12 @@ def _noisy(total: np.ndarray, amp: float, rng: np.random.Generator) -> np.ndarra
 
 
 def _fig_clean_two_peak(rng: np.random.Generator) -> go.Figure:
-    x = np.linspace(0.2, 1.2, 400)
-    ib = _peak(x, 1.0, 0.48, 0.06)
-    cell = _peak(x, 0.32, 0.86, 0.09)
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    ib = _peak_um(x, 1.0, 0.48, 0.06)
+    cell = _peak_um(x, 0.32, 0.86, 0.09)
     raw = _noisy(ib + cell, 0.012, rng)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(go.Scatter(x=x, y=ib + cell, name="Fit", line=dict(color=_FIT_COLOR, width=2.5, dash="dash")))
     fig.add_trace(go.Scatter(x=x, y=cell, name="Cells", line=dict(color=_CELL_COLOR, width=2)))
     fig.add_trace(go.Scatter(x=x, y=ib, name="IBs", line=dict(color=_IB_COLOR, width=2, dash="dot")))
@@ -71,12 +85,12 @@ def _fig_clean_two_peak(rng: np.random.Generator) -> go.Figure:
 
 
 def _fig_overlap(rng: np.random.Generator) -> go.Figure:
-    x = np.linspace(0.2, 1.2, 400)
-    ib = _peak(x, 1.0, 0.50, 0.09)
-    cell = _peak(x, 0.22, 0.70, 0.07)  # sits as a shoulder on the IB slope
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    ib = _peak_um(x, 1.0, 0.50, 0.09)
+    cell = _peak_um(x, 0.22, 0.70, 0.07)  # sits as a shoulder on the IB slope
     raw = _noisy(ib + cell, 0.012, rng)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(go.Scatter(x=x, y=ib + cell, name="Fit", line=dict(color=_FIT_COLOR, width=2.5, dash="dash")))
     fig.add_trace(go.Scatter(x=x, y=cell, name="Cells (shoulder)", line=dict(color=_CELL_COLOR, width=2)))
     fig.add_trace(go.Scatter(x=x, y=ib, name="IBs", line=dict(color=_IB_COLOR, width=2, dash="dot")))
@@ -84,34 +98,34 @@ def _fig_overlap(rng: np.random.Generator) -> go.Figure:
 
 
 def _fig_single_ib(rng: np.random.Generator) -> go.Figure:
-    x = np.linspace(0.2, 1.2, 400)
-    ib = _peak(x, 1.0, 0.48, 0.07)
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    ib = _peak_um(x, 1.0, 0.48, 0.07)
     raw = _noisy(ib, 0.012, rng)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(go.Scatter(x=x, y=ib, name="Fit (IB only)", line=dict(color=_FIT_COLOR, width=2.5, dash="dash")))
     return _base_layout(fig, "C · Lone IB peak → lysis ≈ 100%")
 
 
 def _fig_lone_cell(rng: np.random.Generator) -> go.Figure:
-    x = np.linspace(0.2, 1.2, 400)
-    cell = _peak(x, 1.0, 0.85, 0.08)
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    cell = _peak_um(x, 1.0, 0.85, 0.08)
     raw = _noisy(cell, 0.012, rng)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(go.Scatter(x=x, y=cell, name="Fit (cells only)", line=dict(color=_FIT_COLOR, width=2.5, dash="dash")))
     return _base_layout(fig, "E · Lone cell peak → lysis ≈ 0%")
 
 
 def _fig_broad(rng: np.random.Generator) -> go.Figure:
-    x = np.linspace(0.2, 1.2, 400)
-    raw = _noisy(_peak(x, 1.0, 0.55, 0.16), 0.012, rng)
-    tight = _peak(x, 1.0, 0.55, 0.075)  # default tight bounds underfit a broad peak
-    relaxed = _peak(x, 1.0, 0.55, 0.16)
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    raw = _noisy(_peak_um(x, 1.0, 0.55, 0.16), 0.012, rng)
+    tight = _peak_um(x, 1.0, 0.55, 0.075)  # default tight bounds underfit a broad peak
+    relaxed = _peak_um(x, 1.0, 0.55, 0.16)
     r2_tight = _r_squared(raw, tight)
     r2_relaxed = _r_squared(raw, relaxed)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(
         go.Scatter(
             x=x, y=tight, name=f"Tight fit (R²={r2_tight:.2f})", line=dict(color=_TIGHT_COLOR, width=2.5, dash="dash")
@@ -128,36 +142,28 @@ def _fig_broad(rng: np.random.Generator) -> go.Figure:
 def _fig_not_evaluable(rng: np.random.Generator) -> go.Figure:
     """Synthetic stand-in for a non-evaluable trace (modelled on a real file that
     showed a strongly negative, drifting baseline). Not for quantitative use."""
-    x = np.linspace(0.2, 1.2, 400)
-    drift = -3.0 + 3.2 * (x - 0.2)  # non-physical baseline: ~-3 at small sizes → ~+0.2
-    bumps = _peak(x, 0.6, 0.30, 0.04) + _peak(x, 0.4, 0.95, 0.06)
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    drift = -3.0 + 3.2 * _CELL_TARGET_UM * (x - 0.2 / _CELL_TARGET_UM)  # ~-3 at small sizes → ~+0.2
+    bumps = _peak_um(x, 0.6, 0.30, 0.04) + _peak_um(x, 0.4, 0.95, 0.06)
     raw = drift + bumps + rng.normal(0.0, 0.04, size=x.shape)
+    raw = raw / float(np.max(raw))  # y as a fraction of the trace maximum, like every guide figure
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
+    fig = _base_layout(fig, "F · Not evaluable: non-physical baseline")
     fig.add_hline(y=0.0, line=dict(color="#9ca3af", width=1, dash="dot"))
-    fig.add_annotation(x=0.28, y=0.55, text="zero line", showarrow=False, font=dict(size=10, color="#9ca3af"))
-    fig.update_layout(
-        title=dict(text="F · Not evaluable: non-physical baseline", font=dict(size=14)),
-        xaxis_title="Particle size (µm)",
-        yaxis_title="Signal",
-        template="plotly_white",
-        height=330,
-        margin=dict(l=45, r=20, t=45, b=45),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.32, x=0),
-    )
-    fig.update_xaxes(range=[0.2, 1.2])
+    fig.add_annotation(x=0.33, y=0.55, text="zero line", showarrow=False, font=dict(size=10, color="#9ca3af"))
     return fig
 
 
 def _fig_shoulder_clear(rng: np.random.Generator) -> go.Figure:
     """A detectable shoulder: the cell region sits above the single-peak prediction."""
-    x = np.linspace(0.2, 1.2, 400)
-    ib = _peak(x, 1.0, 0.70, 0.08)
-    cell = _peak(x, 0.32, 0.95, 0.07)  # shoulder riding on the IB right tail
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    ib = _peak_um(x, 1.0, 0.70, 0.08)
+    cell = _peak_um(x, 0.32, 0.95, 0.07)  # shoulder riding on the IB right tail
     raw = _noisy(ib + cell, 0.012, rng)
-    single = _peak(x, 1.0, 0.70, 0.08)  # what one peak (IB only) predicts
+    single = _peak_um(x, 1.0, 0.70, 0.08)  # what one peak (IB only) predicts
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(
         go.Scatter(x=x, y=single, name="Single-peak prediction", line=dict(color=_TIGHT_COLOR, width=2.5, dash="dash"))
     )
@@ -169,12 +175,12 @@ def _fig_shoulder_clear(rng: np.random.Generator) -> go.Figure:
 
 def _fig_shoulder_hidden(rng: np.random.Generator) -> go.Figure:
     """No detectable shoulder: the right tail matches one peak within the noise."""
-    x = np.linspace(0.2, 1.2, 400)
-    ib = _peak(x, 1.0, 0.70, 0.11)  # broader single peak whose tail reaches the cell region
+    x = np.linspace(0.2, 1.2, 400) / _CELL_TARGET_UM
+    ib = _peak_um(x, 1.0, 0.70, 0.11)  # broader single peak whose tail reaches the cell region
     raw = _noisy(ib, 0.012, rng)
-    single = _peak(x, 1.0, 0.70, 0.11)
+    single = _peak_um(x, 1.0, 0.70, 0.11)
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw data", line=dict(color=_RAW_COLOR, width=2)))
+    fig.add_trace(go.Scatter(x=x, y=raw, name="Raw (normalized)", line=dict(color=_RAW_COLOR, width=2)))
     fig.add_trace(
         go.Scatter(x=x, y=single, name="Single-peak prediction", line=dict(color=_FIT_COLOR, width=2.5, dash="dash"))
     )
@@ -428,7 +434,7 @@ def _fig_plateau_overlay() -> go.Figure:
             )
         )
     fig = _base_layout(fig, "J · The distributions are not identical — but lysis % is")
-    fig.update_xaxes(title="Relative particle size", range=[0.2, 1.3])
+    fig.update_xaxes(range=[0.2, 1.3])  # plateau data starts slightly below the shared window
     return fig
 
 
@@ -801,19 +807,21 @@ the noise; we simply can't tell, so the verdict is <span class="tag">none</span>
 samples, not a precise residual from a single trace.</figcaption>
 
 <h2 id="examples">Worked examples</h2>
-<div class="note">Examples A–F are <strong>synthetic illustrations</strong>
-(generated from simple peak functions), not real measurements — they are designed
-to show each situation clearly. The "not evaluable" one (F) is modelled on a real
-file that showed a strongly negative, drifting baseline. Example G is
-<strong>inspired by a similar real case</strong> and adapted slightly for this
-guide (both axes in normalized units).</div>
+<div class="note">All example plots use <strong>relative axes</strong>, like the
+analyzer's <em>Normalize data</em> option: size relative to the cell target size
+(the cell peak sits near 1) and signal as a fraction of each trace's maximum.
+Examples A–F are <strong>synthetic illustrations</strong> (generated from simple
+peak functions), not real measurements — they are designed to show each situation
+clearly. The "not evaluable" one (F) is modelled on a real file that showed a
+strongly negative, drifting baseline. Example G is <strong>inspired by a similar
+real case</strong> and adapted slightly for this guide.</div>
 
 <h3>Example A — Clean two-peak fit (trust the numbers)</h3>
 <p>Two well-separated peaks. The gates accept the 2-peak model, R² is high and
 the lysis % is reliable.</p>
 {{FIGURE:clean}}
-<figcaption>Fig. A — IB peak near 0.48 µm, cell peak near 0.86 µm. Raw (grey),
-fit envelope (blue dashed), cells (green), IBs (orange dotted).</figcaption>
+<figcaption>Fig. A — IB peak near 0.56, cell peak near 1.0 (relative size).
+Raw (grey), fit envelope (blue dashed), cells (green), IBs (orange dotted).</figcaption>
 
 <h3>Example B — Overlapping peaks / shoulder (mind the robustness tag)</h3>
 <p>The cell population appears only as a shoulder on the IB peak — no separate
@@ -865,9 +873,9 @@ excursions; the dotted line marks zero. Not evaluable.</figcaption>
 <p>This case is <strong>inspired by a similar one from a multi-pass
 homogenization campaign</strong> and was adapted slightly for this guide: cycle 2
 and cycle 3 of the same material, with <strong>one further homogenization cycle
-at significant pressure in between</strong>. Both axes are shown in normalized
-units — size relative to the cell peak, signal as a fraction of each trace's
-maximum — and the analysis follows the method publication (workflow and target
+at significant pressure in between</strong>. As throughout this guide, the axes
+are relative (size relative to the cell target, signal normalized to each trace's
+maximum); the analysis follows the method publication (workflow and target
 settings as described there). Lysis %, R² and the shoulder excess-σ do not depend
 on the axis scaling.</p>
 {{FIGURE:plateau_fits}}
