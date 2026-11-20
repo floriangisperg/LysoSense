@@ -24,25 +24,31 @@ env/
 .claude/
 .agents/
 
-# Notebooks
-notebooks/
-.ipynb_checkpoints/
+# Exploration notebooks (use scripts/ instead)
+/notebooks/
 
-# Data & generated outputs
-/data/
+# Data: proprietary measurement data — ignore contents, keep the README maps
+/data/**
+!/data/README.md
+!/data/*/
+!/data/*/README.md
+
+# Local-only experiment code (anchored to repo root)
+/scripts/
+
+# Generated file types
 *.xlsx
 *.csv
 *.log
 *.png
 # Keep logo assets tracked (override the *.png ignore above)
 !app/assets/*.png
+
+# Local notes & misc
 claude.md
 agents.md
-
-# Misc
+AGENTS.md
 .DS_Store
 Thumbs.db
-scripts/
 src/lysosense/facs/
 uv.lock
-AGENTS.md

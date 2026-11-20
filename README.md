@@ -45,12 +45,32 @@ install or `PYTHONPATH` setup is required.
 
 ```
 app/                  Streamlit entry point, in-app guide, and logo assets
-src/lysosense/        Package: io.py (parsing), analysis.py (fitting)
-tests/                pytest suite
-docs/                 User guide
+src/lysosense/        Package: io.py (parsing), analysis.py (fitting), transforms.py
+tests/                pytest suite (golden tests use local data when present, else skip)
+docs/                 User guide, dataset provenance (DATASETS.md), structure, notes/
+data/                 Measurement data — local only (gitignored), canonical for the HMS campaign
+scripts/              Local-only experiment scripts and outputs (gitignored)
 .github/workflows/    CI (ruff, mypy, pyright on Python 3.13)
 requirements.txt      Pinned runtime dependencies
 ```
+
+## Data (local only)
+
+The proprietary measurement data lives in `data/` (gitignored,
+OneDrive-backed). This repo is the **canonical home** of the executed HMS
+campaign data (`data/HMS_data/`); the sibling *Homogenisation* repo keeps a
+hash-verified working copy (a subset) and consumes the per-experiment
+`lysosense_summary.xlsx` exports from it — so nothing inside `HMS_data/` may
+be renamed or moved casually. Full provenance ledger, hash-verification
+status, operator-note translations and downstream-file contract:
+[docs/DATASETS.md](docs/DATASETS.md) · folder maps: [data/README.md](data/README.md).
+
+| Folder | Contents |
+|---|---|
+| `HMS_data/` | Executed HMS campaign: Small EXP 1/2/3, Daten Pilot (V302/V303), Small_700, Bench DEVOPS (V224 fresh/frozen) — canonical |
+| `CPS-FACS/` | FACS campaign CPS + FACS raw (Demo/Eng1/Eng2); `CPS/Demo` backs the golden tests |
+| `cps_archive_2024_2025/` | Raw CPS exports from 2024–2025 campaigns (unreferenced provenance archive) |
+| `rollout-demo/` | Curated demo bundle (byte-identical subset of the rows above) |
 
 ## Citation
 
