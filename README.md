@@ -67,7 +67,7 @@ status, operator-note translations and downstream-file contract:
 | Folder | Contents |
 |---|---|
 | `HMS_data/` | Executed HMS campaign: Small EXP 1/2/3, Daten Pilot (V302/V303), Small_700, Bench DEVOPS (V224 fresh/frozen) — canonical |
-| `CPS-FACS/` | FACS campaign CPS + FACS raw (Demo/Eng1/Eng2); `CPS/Demo` backs the golden tests |
+| `CPS-FACS/` | CPS measurements of the G7/CMC2 campaign; `CPS/Demo` backs the golden tests. The paired FACS raw data lives in the FlowLysis repo |
 | `cps_archive_2024_2025/` | Raw CPS exports from 2024–2025 campaigns (unreferenced provenance archive) |
 | `rollout-demo/` | Curated demo bundle (byte-identical subset of the rows above) |
 
