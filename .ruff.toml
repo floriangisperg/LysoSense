@@ -1,6 +1,6 @@
 line-length = 88
 target-version = "py313"
-extend-exclude = ["data", "results", "src/lysosense.egg-info", "notebooks"]
+extend-exclude = ["data", "src/lysosense.egg-info"]
 
 # Explicit rule selection so CI is stable across ruff releases. ruff 0.16
 # expanded its *default* selection (now includes UP/C/...), which would flag the

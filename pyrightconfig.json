@@ -8,9 +8,7 @@
     "build",
     "dist",
     "src/lysosense.egg-info",
-    "notebooks",
     "data",
-    "results",
     "scripts",
     "src/lysosense/facs"
   ],
