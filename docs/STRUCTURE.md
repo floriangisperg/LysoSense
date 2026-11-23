@@ -30,7 +30,6 @@ iterations to `scripts/archive_*/`.
 | `tests/` | yes | pytest suite; golden-master tests use `data/CPS-FACS/CPS/Demo` when present, else skip |
 | `docs/` | yes | `USER_GUIDE.md`, `DATASETS.md` (data provenance), `STRUCTURE.md` (this file), `notes/` (analysis notes) |
 | `data/` | no | Measurement data — see [data/README.md](../data/README.md) and [DATASETS.md](DATASETS.md) |
-| `scripts/` | no | Local experiment/diagnostic scripts; `scripts/out/` = generated outputs; `scripts/archive_2025/` = parked 2025 iterations |
 
 ## Where new work lands
 
@@ -40,13 +39,15 @@ iterations to `scripts/archive_*/`.
 - **New dataset:** `data/<name>/` with a short `README.md`, plus an entry in
   `DATASETS.md`. Never rename raw measurement files — filenames are parsed
   downstream.
-- **Exploration/diagnostics:** a script in `scripts/` writing to
-  `scripts/out/`; promote lasting conclusions into `docs/notes/`.
+- **Exploration/diagnostics:** in a dedicated sibling repo (FlowLysis
+  pattern) or the Projects Archive — not here. Promote lasting conclusions
+  into `docs/notes/`. (The former local `scripts/` folder was archived on
+  2026-11-23 to `Archive/LysoSense_scripts_2026-11/`.)
 
 ## Hygiene
 
-- Generated outputs belong in `scripts/out/` only (regenerable, safe to
-  delete); no scratch files elsewhere in the tree.
+- No local scratch in this repo: analysis scripts and their outputs live in
+  dedicated sibling repos or the Projects Archive, never here.
 - Raw instrument data (`.dat`, `.fcs`) is provenance — never delete or rename.
 - German-language operator notes in `data/` are provenance: kept verbatim,
   translated in `DATASETS.md`.

@@ -44,8 +44,11 @@ DEVOPS `Fresh/CPS`, Small_700) were produced by the LysoSense app but are
 - The executed-pressure decoding (e.g. Small EXP 2 pass 2 ran at 200 bar, not
   the planned 300) relies on those filenames.
 
-A local-only script (`scripts/repro_hms.py`, gitignored) re-runs the app
-pipeline over this tree and compares against the shipped summaries.
+The tooling that generated and cross-checked these summaries (including the
+reproduction script `repro_hms.py`, with settings autofit + Relax-widths ON +
+ib 0.65 / cell 0.94 µm) was archived on 2026-11-23 to
+`05_Projects/Archive/LysoSense_scripts_2026-11/` — copy it back if a re-check
+against the shipped summaries is ever needed.
 
 ### Cross-repo sync
 

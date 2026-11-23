@@ -49,7 +49,6 @@ src/lysosense/        Package: io.py (parsing), analysis.py (fitting), transform
 tests/                pytest suite (golden tests use local data when present, else skip)
 docs/                 User guide, dataset provenance (DATASETS.md), structure, notes/
 data/                 Measurement data — local only (gitignored), canonical for the HMS campaign
-scripts/              Local-only experiment scripts and outputs (gitignored)
 .github/workflows/    CI (ruff, mypy, pyright on Python 3.13)
 requirements.txt      Pinned runtime dependencies
 ```
