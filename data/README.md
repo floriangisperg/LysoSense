@@ -7,8 +7,8 @@ status and operator-note translations:
 
 | Folder | What it is |
 |---|---|
-| `HMS_data/` | Executed HMS campaign (Small EXP 1/2/3, Daten Pilot V302/V303, Small_700, Bench DEVOPS V224) — **canonical**; the sibling Homogenisation repo mirrors a verified subset |
-| `CPS-FACS/` | FACS campaign: CPS `.dat` + FACS `.fcs` raw (Demo/Eng1/Eng2); `CPS/Demo` backs the pytest golden tests |
+| `HMS_data/` | Executed HMS campaign (Small EXP 1/2/3, Daten Pilot V302/V303, Small_700, Bench DEVOPS V224 — incl. its raw FCS files) — **canonical**; the sibling Homogenisation repo mirrors a verified subset |
+| `CPS-FACS/` | CPS `.dat` of the G7/CMC2 FACS campaign (Demo/Eng1/Eng2); `CPS/Demo` backs the pytest golden tests. The paired FACS raw data lives in the FlowLysis repo |
 | `cps_archive_2024_2025/` | Raw CPS exports from 2024–2025 campaigns; referenced by no code |
 | `rollout-demo/` | Curated 8-file demo bundle (byte-identical subset of the rows above) |
 

@@ -10,7 +10,6 @@
     "src/lysosense.egg-info",
     "data",
     "scripts",
-    "src/lysosense/facs"
   ],
   "reportMissingTypeStubs": false,
   "pythonVersion": "3.13"

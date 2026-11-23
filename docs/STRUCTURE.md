@@ -26,7 +26,6 @@ iterations to `scripts/archive_*/`.
 | Path | Tracked | Contents |
 |---|---|---|
 | `src/lysosense/` | yes | Package: `io.py` (`.dat` parsing), `analysis.py` (peak fitting), `transforms.py`, `_version.py` (version + changelog, single source of truth) |
-| `src/lysosense/facs/` | no | Local flow-cytometry subpackage — **not** part of the app, not wired in |
 | `app/` | yes | Streamlit entry point, in-app guide, logo assets |
 | `tests/` | yes | pytest suite; golden-master tests use `data/CPS-FACS/CPS/Demo` when present, else skip |
 | `docs/` | yes | `USER_GUIDE.md`, `DATASETS.md` (data provenance), `STRUCTURE.md` (this file), `notes/` (analysis notes) |
@@ -53,3 +52,6 @@ iterations to `scripts/archive_*/`.
   translated in `DATASETS.md`.
 - `_version.py` feeds the app's version label, the "What's new?" dialog and
   the XLSX export filenames; `CITATION.cff` must be bumped alongside it.
+- Flow-cytometry code and FACS softsensor datasets live in the sibling
+  **FlowLysis** repo — LysoSense is CPS-only. Exception: the V224 campaign FCS
+  files stay in `data/HMS_data/Bench DEVOPS/` as campaign material.

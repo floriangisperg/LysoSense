@@ -18,7 +18,7 @@ Canonical home of the executed high-pressure homogenization campaign
 | `Small EXP 1/2/3` | Lab scale, 5 passes each; the executed pressure per pass is encoded in the filename (`EXP_<exp>_<pass>_<pressure>_1100.dat`) |
 | `Daten Pilot` | Pilot runs V302 (300 bar) and V303 (450 bar), passes C1–C5 plus RBM baseline (`I3_D26I30V30x_PS…_HOMO_C<n>_S_01_1100.dat`) |
 | `Small_700` | V224 fresh-biomass subset at 700 bar (2 replicates × pre-homo + cyc1–3) |
-| `Bench DEVOPS` | V224 fresh vs frozen biomass: `Fresh/{CPS,FCS}` and `Frozen/{CPS,FACS}` (`.fcs` = raw flow-cytometry events) |
+| `Bench DEVOPS` | V224 fresh vs frozen biomass: `Fresh/{CPS,FCS}` and `Frozen/{CPS,FACS}` (`.fcs` = raw flow-cytometry events, kept here as campaign material) |
 | `HPH_experimental_plan.xlsx` | The accepted experimental plan |
 
 ### Operator notes (German, provenance — kept verbatim)
@@ -57,12 +57,13 @@ compare the SHA256 of every file by relative path under both trees. Anything
 added under `Small EXP */`, `Daten Pilot/` or `Small_700/` here requires a
 re-sync there and an update to their `docs/DATASETS.md` sync note.
 
-## CPS-FACS — FACS campaign (Demo / Eng1 / Eng2)
+## CPS-FACS — CPS measurements of the G7/CMC2 FACS campaign
 
-~371 MB: `CPS/` (27 `.dat` across `Demo/`, `Eng1/`, `Eng2/`), `FACS/`
-(38 `.fcs` raw events files, same three subfolders) and
-`FACS/Zusammenfassung FACS Demo_Eng1_Eng2.pptx` (operator summary deck,
-"Summary FACS Demo/Eng1/Eng2").
+~0.7 MB: `CPS/` (27 `.dat` across `Demo/`, `Eng1/`, `Eng2/`). The paired FACS
+raw data (38 `.fcs` and the German summary deck
+`Zusammenfassung FACS Demo_Eng1_Eng2.pptx`) lives in the sibling **FlowLysis**
+repo at `data/dataset_eng/FACS/`; the duplicated copy that was here was
+removed on 2026-11-23 after verifying all files byte-identical (SHA256).
 
 `CPS/Demo/` is **load-bearing**: `tests/test_golden.py` locks end-to-end
 parse+fit metrics against three Demo files (golden-master values) and skips
